@@ -12,12 +12,15 @@
 // posix / linux networking
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <ifaddrs.h>
 #include <netpacket/packet.h>
 #include <linux/if_ether.h>
+#include <sys/select.h>
 #include <unistd.h>
 
 #include <pcap.h>
@@ -170,13 +173,18 @@ void Scanner::run() {
     }
 
     stopRequested_ = false;
+    linkType_ = pcap_datalink(pcapHandle_);
 
     std::thread pcapThread(&Scanner::pcapLoop, this);
+
+    // Give pcap_loop time to start capturing before we send packets (avoids losing early replies)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
     std::thread senderThread(&Scanner::sendLoop, this);
 
     senderThread.join();
 
-    // čekání na odpovědi po odeslání všech paketů, ale reagujeme i na SIGINT/SIGTERM
+    // Wait for replies after all packets are sent; respect SIGINT/SIGTERM during wait
     const int stepMs = 50;
     int waited = 0;
     while (waited < timeoutMs_ && !stopRequested_.load()) {
@@ -212,10 +220,18 @@ void Scanner::sendLoop() {
     if (ifinfo.hasIpv4) {
         icmp4Fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
         if (icmp4Fd >= 0) {
-            struct sockaddr_in bind4{};
-            bind4.sin_family = AF_INET;
-            bind4.sin_addr = ifinfo.ipv4;
-            bind(icmp4Fd, reinterpret_cast<struct sockaddr *>(&bind4), sizeof(bind4));
+            // Bind ICMPv4 socket to the selected interface
+            struct ifreq ifr{};
+            std::strncpy(ifr.ifr_name, interface_.c_str(), IFNAMSIZ - 1);
+            ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+            setsockopt(icmp4Fd, SOL_SOCKET, SO_BINDTODEVICE,
+                       &ifr, sizeof(ifr));
+
+            // Bind socket to our IPv4 address on that interface
+            struct sockaddr_in src{};
+            src.sin_family = AF_INET;
+            src.sin_addr = ifinfo.ipv4;
+            bind(icmp4Fd, reinterpret_cast<struct sockaddr *>(&src), sizeof(src));
         }
     }
     if (ifinfo.hasIpv6) {
@@ -287,6 +303,7 @@ void Scanner::sendLoop() {
             setIcmpv6EchoChecksum(ifinfo.ipv6.s6_addr, targetAddr.s6_addr,
                                   echoPayload.data(), echoPayload.size());
             dst6.sin6_addr = targetAddr;
+            dst6.sin6_scope_id = ifinfo.ifindex;
             sendto(icmp6Fd, echoPayload.data(), echoPayload.size(), 0,
                    reinterpret_cast<struct sockaddr *>(&dst6), sizeof(dst6));
         }
@@ -305,8 +322,14 @@ void Scanner::pcapLoop() {
     pcap_loop(pcapHandle_, -1, &Scanner::pcapCallback, reinterpret_cast<u_char *>(this));
 }
 
+// Additional ethertype used when handling 802.1Q VLAN encapsulation
+namespace {
+const std::uint16_t ETHERTYPE_VLAN = 0x8100;
+}
+
 // static callback used by libpcap for each captured frame
 // inspects ethertype/headers, recognizes replies and updates resultsStore
+// supports Ethernet (DLT_EN10MB), 802.1Q VLAN, and Linux cooked (DLT_LINUX_SLL)
 void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_char *bytes) {
     (void)h;
     auto *self = reinterpret_cast<Scanner *>(user);
@@ -314,12 +337,34 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
     const std::size_t len = static_cast<std::size_t>(h->caplen);
-    if (len < 14) { return; }
 
-    const std::uint16_t etherType = (static_cast<std::uint16_t>(bytes[12]) << 8) | bytes[13];
+    std::size_t l2_start = 0;
+    std::uint16_t etherType = 0;
 
-    if (etherType == ETHERTYPE_ARP && len >= 14 + 28) {
-        const auto *arp = reinterpret_cast<const ArpPacket *>(bytes + 14);
+    if (self->linkType_ == DLT_LINUX_SLL2) {
+        // Linux cooked v2: 20-byte header, protocol (EtherType) at bytes 0-1, payload at 20
+        if (len < 20) { return; }
+        l2_start = 20;
+        etherType = (static_cast<std::uint16_t>(bytes[0]) << 8) | bytes[1];
+    } else if (self->linkType_ == DLT_LINUX_SLL) {
+        // Linux cooked v1: 16-byte header, protocol at bytes 14-15, payload at 16
+        if (len < 16) { return; }
+        l2_start = 16;
+        etherType = (static_cast<std::uint16_t>(bytes[14]) << 8) | bytes[15];
+    } else {
+        // DLT_EN10MB (Ethernet) or unknown: assume 14-byte Ethernet
+        if (len < 14) { return; }
+        l2_start = 14;
+        etherType = (static_cast<std::uint16_t>(bytes[12]) << 8) | bytes[13];
+        // 802.1Q VLAN: skip 4 bytes and read inner etherType
+        if (etherType == ETHERTYPE_VLAN && len >= 18) {
+            l2_start = 18;
+            etherType = (static_cast<std::uint16_t>(bytes[16]) << 8) | bytes[17];
+        }
+    }
+
+    if (etherType == ETHERTYPE_ARP && len >= l2_start + 28) {
+        const auto *arp = reinterpret_cast<const ArpPacket *>(bytes + l2_start);
         if (ntohs(arp->op) != ARP_OP_REPLY) { return; }
         char ipStr[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, arp->senderIp, ipStr, sizeof(ipStr)) == nullptr) { return; }
@@ -327,12 +372,12 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
 
-    if (etherType == ETHERTYPE_IP && len >= 14 + 20) {
-        const auto *ip4 = reinterpret_cast<const Ipv4Header *>(bytes + 14);
+    if (etherType == ETHERTYPE_IP && len >= l2_start + 20) {
+        const auto *ip4 = reinterpret_cast<const Ipv4Header *>(bytes + l2_start);
         if ((ip4->versionIhl >> 4) != 4 || ip4->protocol != IPPROTO_ICMP) { return; }
         std::size_t ipLen = (ip4->versionIhl & 0x0f) * 4u;
-        if (len < 14 + ipLen + 8) { return; }
-        const auto *icmp = reinterpret_cast<const Icmpv4Header *>(bytes + 14 + ipLen);
+        if (len < l2_start + ipLen + 8) { return; }
+        const auto *icmp = reinterpret_cast<const Icmpv4Header *>(bytes + l2_start + ipLen);
         if (icmp->type != ICMPV4_ECHO_REPLY) { return; }
         char ipStr[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, ip4->srcAddr, ipStr, sizeof(ipStr)) == nullptr) { return; }
@@ -340,30 +385,44 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
 
-    if (etherType == ETHERTYPE_IPV6 && len >= 14 + 40) {
-        const auto *ip6 = reinterpret_cast<const Ipv6Header *>(bytes + 14);
+    if (etherType == ETHERTYPE_IPV6 && len >= l2_start + 40) {
+        const auto *ip6 = reinterpret_cast<const Ipv6Header *>(bytes + l2_start);
         if ((ntohl(ip6->versionTrafficFlow) >> 28) != 6 || ip6->nextHeader != IPPROTO_ICMPV6) { return; }
-        if (len < 14 + 40 + 8) { return; }
-        const auto *icmp6 = reinterpret_cast<const Icmpv6Header *>(bytes + 14 + 40);
+        if (len < l2_start + 40 + 8) { return; }
+        const auto *icmp6 = reinterpret_cast<const Icmpv6Header *>(bytes + l2_start + 40);
         if (icmp6->type == ICMPV6_NDP_NA) {
-            // 14 (Ethernet) + 40 (IPv6) + 8 (ICMPv6 hdr) + 4 (flags) + 16 (Target) = 82 bytes
-            if (len < 82) { return; }
-
-            // Target IPv6 address is at offset 14+40+8+4 = 66
+            // ICMPv6 header (4 bytes) + flags (4 bytes) + target address (16 bytes)
+            if (len < l2_start + 40 + 4 + 4 + 16) { return; }
+            const std::size_t na_target_offset = l2_start + 40 + 4 + 4;
             char targetIpStr[INET6_ADDRSTRLEN];
-            if (inet_ntop(AF_INET6, bytes + 66, targetIpStr, sizeof(targetIpStr)) == nullptr) { return; }
-
-            // Source MAC from Ethernet header (bytes[6..11])
-            std::string mac = formatMac(bytes + 6);
-
-            // Primary: map MAC to target IPv6 address from NA
-            self->results_.updateL2Ok(targetIpStr, mac);
-
-            // Also map MAC to source IPv6 address from IPv6 header (for safety if they differ)
-            char srcIpStr[INET6_ADDRSTRLEN];
-            if (inet_ntop(AF_INET6, ip6->srcAddr, srcIpStr, sizeof(srcIpStr)) != nullptr) {
-                self->results_.updateL2Ok(srcIpStr, mac);
+            if (inet_ntop(AF_INET6, bytes + na_target_offset, targetIpStr, sizeof(targetIpStr)) == nullptr) { return; }
+            // Parse NDP options to find Target Link-Layer Address (type 2)
+            std::string mac;
+            const std::size_t options_offset = na_target_offset + 16;
+            if (len > options_offset + 2) {
+                std::size_t off = options_offset;
+                while (off + 2 <= len) {
+                    std::uint8_t optType = bytes[off];
+                    std::uint8_t optLenUnits = bytes[off + 1]; // in units of 8 bytes
+                    if (optLenUnits == 0) {
+                        break;
+                    }
+                    std::size_t optTotalLen = static_cast<std::size_t>(optLenUnits) * 8u;
+                    if (off + optTotalLen > len) {
+                        break;
+                    }
+                    if (optType == 2 && optTotalLen >= 8) { // Target Link-Layer Address
+                        mac = formatMac(bytes + off + 2);
+                        break;
+                    }
+                    off += optTotalLen;
+                }
             }
+            // Fallback: if we did not find a TLV with MAC, use link-layer source
+            if (mac.empty()) {
+                mac = formatMac(bytes + 6);
+            }
+            self->results_.updateL2Ok(targetIpStr, mac);
             return;
         }
         if (icmp6->type == ICMPV6_ECHO_REPLY) {
@@ -458,9 +517,14 @@ NetworkRange Scanner::parseIpv4Cidr(const std::string &addrPart, std::uint8_t pr
     range.isIPv6 = false;
     range.prefixLength = prefixLen;
 
-    // Usable hosts = 2^(32-prefix) - 2, but be careful with /31, /32
-    if (prefixLen >= 31) {
-        range.usableHostCount = (prefixLen == 32) ? 1 : 0;
+    // Usable hosts according to prefix:
+    // - /32: exactly one host (the address itself)
+    // - /31: RFC 3021 point-to-point – both addresses usable → 2 hosts
+    // - otherwise: 2^(32-prefix) - 2 (exclude network and broadcast)
+    if (prefixLen == 32) {
+        range.usableHostCount = 1;
+    } else if (prefixLen == 31) {
+        range.usableHostCount = 2;
     } else {
         std::uint32_t hostBits = 32 - prefixLen;
         std::uint64_t total = (1ULL << hostBits);
@@ -543,6 +607,20 @@ void Scanner::appendIpv4Hosts(const NetworkRange &range, std::vector<std::string
             throw std::runtime_error("inet_ntop failed in appendIpv4Hosts");
         }
         out.emplace_back(buf);
+        return;
+    }
+
+    // For /31 (RFC 3021): both addresses are usable – base+0 and base+1
+    if (range.prefixLength == 31) {
+        for (std::uint32_t i = 0; i <= 1; ++i) {
+            struct in_addr h{};
+            h.s_addr = htonl(base + i);
+            char buf[INET_ADDRSTRLEN];
+            if (!inet_ntop(AF_INET, &h, buf, sizeof(buf))) {
+                throw std::runtime_error("inet_ntop failed in appendIpv4Hosts");
+            }
+            out.emplace_back(buf);
+        }
         return;
     }
 

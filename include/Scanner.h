@@ -62,6 +62,7 @@ public:
 private:
     std::string interface_;
     int timeoutMs_{1000};
+    int linkType_{0};  // pcap datalink type (DLT_*), set before pcap_loop
     pcap *pcapHandle_{nullptr};
     std::vector<NetworkRange> ranges_;
     ResultsStore results_;

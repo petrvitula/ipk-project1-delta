@@ -90,13 +90,23 @@ std::vector<std::uint8_t> buildArpRequestFrame(const std::uint8_t ourMac[6],
 
 // build icmpv4 echo request (without ip header)
 std::vector<std::uint8_t> buildIcmpv4EchoRequest(std::uint16_t id, std::uint16_t seq) {
-    std::vector<std::uint8_t> buf(8);
+    // Match typical ping behaviour: ICMP header (8 bytes) + small payload so that
+    // total packet length is non-trivial (some devices are picky about zero-length payloads).
+    static const char payload[] = "ipk-l2l3-scan-payload";
+    const std::size_t payloadLen = sizeof(payload) - 1; // without terminating '\0'
+
+    std::vector<std::uint8_t> buf(sizeof(Icmpv4Header) + payloadLen);
     auto *icmp = reinterpret_cast<Icmpv4Header *>(buf.data());
     icmp->type = ICMPV4_ECHO_REQUEST;
     icmp->code = 0;
     icmp->checksum = 0;
     icmp->id = htons(id);
     icmp->sequence = htons(seq);
+
+    // Copy payload right after the header
+    std::memcpy(buf.data() + sizeof(Icmpv4Header), payload, payloadLen);
+
+    // Checksum over entire ICMP message (header + payload)
     icmp->checksum = inetChecksum(buf.data(), buf.size());
     return buf;
 }
