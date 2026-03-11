@@ -5,6 +5,7 @@
 
 namespace {
 
+// Helper for ICMPv6: sum 16-bit words in network order (ntohs for correct value on all hosts)
 std::uint32_t addChecksumWords(const std::uint16_t *words, std::size_t count) {
     std::uint32_t sum = 0;
     for (std::size_t i = 0; i < count; ++i) {
@@ -18,13 +19,18 @@ std::uint32_t addChecksumWords(const std::uint16_t *words, std::size_t count) {
 
 } // namespace
 
-// generic internet checksum (rfc 1071) used for icmpv4 and other headers
+// Generic Internet checksum (RFC 1071): one's complement sum of 16-bit words
+// in network (big-endian) order. Sums raw bytes as 16-bit words without ntohs.
 std::uint16_t inetChecksum(const void *data, std::size_t len) {
-    const auto *words = static_cast<const std::uint16_t *>(data);
-    std::size_t count = len / 2;
-    std::uint32_t sum = addChecksumWords(words, count);
-    if (len & 1) {
-        sum += static_cast<const std::uint8_t *>(data)[len - 1] << 8;
+    const auto *p = static_cast<const std::uint8_t *>(data);
+    std::uint32_t sum = 0;
+    std::size_t i = 0;
+    for (; i + 2 <= len; i += 2) {
+        std::uint16_t word = (static_cast<std::uint16_t>(p[i]) << 8) | p[i + 1];
+        sum += word;
+    }
+    if (i < len) {
+        sum += static_cast<std::uint16_t>(p[i]) << 8;
     }
     while (sum >> 16) {
         sum = (sum & 0xFFFFu) + (sum >> 16);
@@ -106,8 +112,9 @@ std::vector<std::uint8_t> buildIcmpv4EchoRequest(std::uint16_t id, std::uint16_t
     // Copy payload right after the header
     std::memcpy(buf.data() + sizeof(Icmpv4Header), payload, payloadLen);
 
-    // Checksum over entire ICMP message (header + payload)
-    icmp->checksum = inetChecksum(buf.data(), buf.size());
+    // Checksum over entire ICMP message (header + payload); store in network byte order
+    std::uint16_t csum = inetChecksum(buf.data(), buf.size());
+    icmp->checksum = htons(csum);
     return buf;
 }
 

@@ -331,7 +331,6 @@ const std::uint16_t ETHERTYPE_VLAN = 0x8100;
 // inspects ethertype/headers, recognizes replies and updates resultsStore
 // supports Ethernet (DLT_EN10MB), 802.1Q VLAN, and Linux cooked (DLT_LINUX_SLL)
 void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_char *bytes) {
-    (void)h;
     auto *self = reinterpret_cast<Scanner *>(user);
     if (self->stopRequested_.load() || gTerminate.load()) {
         return;
@@ -341,29 +340,34 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
     std::size_t l2_start = 0;
     std::uint16_t etherType = 0;
 
+    // Read EtherType in network byte order and convert to host for comparison
+    auto readEtherType = [](const u_char *p) -> std::uint16_t {
+        return ntohs(static_cast<std::uint16_t>((static_cast<std::uint16_t>(p[0]) << 8) | p[1]));
+    };
+
     if (self->linkType_ == DLT_LINUX_SLL2) {
         // Linux cooked v2: 20-byte header, protocol (EtherType) at bytes 0-1, payload at 20
         if (len < 20) { return; }
         l2_start = 20;
-        etherType = (static_cast<std::uint16_t>(bytes[0]) << 8) | bytes[1];
+        etherType = readEtherType(bytes + 0);
     } else if (self->linkType_ == DLT_LINUX_SLL) {
         // Linux cooked v1: 16-byte header, protocol at bytes 14-15, payload at 16
         if (len < 16) { return; }
         l2_start = 16;
-        etherType = (static_cast<std::uint16_t>(bytes[14]) << 8) | bytes[15];
+        etherType = readEtherType(bytes + 14);
     } else {
         // DLT_EN10MB (Ethernet) or unknown: assume 14-byte Ethernet
         if (len < 14) { return; }
         l2_start = 14;
-        etherType = (static_cast<std::uint16_t>(bytes[12]) << 8) | bytes[13];
+        etherType = readEtherType(bytes + 12);
         // 802.1Q VLAN: skip 4 bytes and read inner etherType
-        if (etherType == ETHERTYPE_VLAN && len >= 18) {
+        if (etherType == ntohs(ETHERTYPE_VLAN) && len >= 18) {
             l2_start = 18;
-            etherType = (static_cast<std::uint16_t>(bytes[16]) << 8) | bytes[17];
+            etherType = readEtherType(bytes + 16);
         }
     }
 
-    if (etherType == ETHERTYPE_ARP && len >= l2_start + 28) {
+    if (etherType == ntohs(ETHERTYPE_ARP) && len >= l2_start + 28) {
         const auto *arp = reinterpret_cast<const ArpPacket *>(bytes + l2_start);
         if (ntohs(arp->op) != ARP_OP_REPLY) { return; }
         char ipStr[INET_ADDRSTRLEN];
@@ -372,20 +376,32 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
 
-    if (etherType == ETHERTYPE_IP && len >= l2_start + 20) {
+    if (etherType == ntohs(ETHERTYPE_IP) && len >= l2_start + 20) {
         const auto *ip4 = reinterpret_cast<const Ipv4Header *>(bytes + l2_start);
+
+        // 1. Check version and protocol
         if ((ip4->versionIhl >> 4) != 4 || ip4->protocol != IPPROTO_ICMP) { return; }
+
         std::size_t ipLen = (ip4->versionIhl & 0x0f) * 4u;
         if (len < l2_start + ipLen + 8) { return; }
+
         const auto *icmp = reinterpret_cast<const Icmpv4Header *>(bytes + l2_start + ipLen);
-        if (icmp->type != ICMPV4_ECHO_REPLY) { return; }
+
+        // 2. Must be Echo Reply (0), not Echo Request (8)
+        if (icmp->type != 0) { return; }
+
+        // 3. ID must match what we sent
+        std::uint16_t myId = static_cast<std::uint16_t>(getpid() & 0xFFFF);
+        if (ntohs(icmp->id) != myId) { return; }
+
         char ipStr[INET_ADDRSTRLEN];
-        if (inet_ntop(AF_INET, ip4->srcAddr, ipStr, sizeof(ipStr)) == nullptr) { return; }
-        self->results_.updateL3Ok(ipStr);
+        if (inet_ntop(AF_INET, ip4->srcAddr, ipStr, sizeof(ipStr)) != nullptr) {
+            self->results_.updateL3Ok(ipStr);
+        }
         return;
     }
 
-    if (etherType == ETHERTYPE_IPV6 && len >= l2_start + 40) {
+    if (etherType == ntohs(ETHERTYPE_IPV6) && len >= l2_start + 40) {
         const auto *ip6 = reinterpret_cast<const Ipv6Header *>(bytes + l2_start);
         if ((ntohl(ip6->versionTrafficFlow) >> 28) != 6 || ip6->nextHeader != IPPROTO_ICMPV6) { return; }
         if (len < l2_start + 40 + 8) { return; }
@@ -459,6 +475,9 @@ void Scanner::listInterfaces(std::ostream &os) {
     pcap_freealldevs(alldevs);
 }
 
+// Maximum hosts per subnet to avoid OOM/hang on huge ranges (e.g. 10.0.0.0/8)
+constexpr std::uint64_t MAX_HOSTS_PER_SUBNET = 65536;
+
 NetworkRange Scanner::parseCidr(const std::string &cidr) const {
     auto slashPos = cidr.find('/');
     if (slashPos == std::string::npos) {
@@ -531,6 +550,10 @@ NetworkRange Scanner::parseIpv4Cidr(const std::string &addrPart, std::uint8_t pr
         range.usableHostCount = (total >= 2) ? total - 2 : 0;
     }
 
+    if (range.usableHostCount > MAX_HOSTS_PER_SUBNET) {
+        throw std::invalid_argument("Subnet too large (max " + std::to_string(MAX_HOSTS_PER_SUBNET) + " hosts per -s): " + addrPart + "/" + std::to_string(prefixLen));
+    }
+
     std::ostringstream oss;
     oss << buf << "/" << static_cast<int>(prefixLen);
     range.networkAddress = oss.str();
@@ -578,6 +601,10 @@ NetworkRange Scanner::parseIpv6Cidr(const std::string &addrPart, std::uint8_t pr
     } else {
         // Match README example for /126: 2^(hostBits) - 1 usable hosts (skip network).
         range.usableHostCount = (total >= 1) ? total - 1 : 0;
+    }
+
+    if (range.usableHostCount > MAX_HOSTS_PER_SUBNET) {
+        throw std::invalid_argument("Subnet too large (max " + std::to_string(MAX_HOSTS_PER_SUBNET) + " hosts per -s): " + addrPart + "/" + std::to_string(prefixLen));
     }
 
     std::ostringstream oss;
