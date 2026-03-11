@@ -28,6 +28,7 @@ static int tests_failed = 0;
 
 // --- 1. Parsing CIDR ------------------------------------------------------
 
+// Basic IPv4 /30 range – verify that network and broadcast are excluded
 static void test_cidr_ipv4_30() {
     TEST("CIDR 192.168.1.0/30 → 2 hosts (without network and broadcast)");
     try {
@@ -50,6 +51,7 @@ static void test_cidr_ipv4_30() {
     }
 }
 
+// Single-host IPv4 /32 range – exactly one concrete host
 static void test_cidr_ipv4_32() {
     TEST("CIDR 10.0.0.5/32 → 1 host");
     try {
@@ -70,6 +72,7 @@ static void test_cidr_ipv4_32() {
     }
 }
 
+// IPv6 /126 range – number of usable hosts taken from README example
 static void test_cidr_ipv6_126() {
     TEST("CIDR fd00::1/126 → 3 hosts (according to README)");
     try {
@@ -86,6 +89,7 @@ static void test_cidr_ipv6_126() {
     }
 }
 
+// Summary lines must contain correct usable host counts for two IPv4 ranges
 static void test_cidr_summary_counts() {
     TEST("Scanning ranges: number of hosts /30=2, /29=6");
     try {
@@ -111,6 +115,7 @@ static void test_cidr_summary_counts() {
 
 // --- 2. ResultsStore: overwrite at the same IP, no duplicates -----------------
 
+// When the same IPv4 host is updated multiple times, only one line should be printed
 static void test_results_store_update_no_duplicate() {
     TEST("ResultsStore: same IP twice → overwrites, one line in output");
     try {
@@ -139,6 +144,70 @@ static void test_results_store_update_no_duplicate() {
         for (size_t i = 0; (i = s.find("192.168.1.1", i)) != std::string::npos; ++i, ++count) {}
         if (count != 1u) {
             TEST_FAIL("expected 1 line with 192.168.1.1, found " + std::to_string(count));
+            return;
+        }
+        TEST_OK();
+    } catch (const std::exception &e) {
+        TEST_FAIL(e.what());
+    }
+}
+
+// IPv4 host with explicit FAIL statuses on both layers uses arp/icmpv4 literals
+static void test_results_store_fail_ipv4() {
+    TEST("ResultsStore: IPv4 host with L2/L3 FAIL printed with arp/icmpv4 FAIL");
+    try {
+        ResultsStore r;
+        r.initHost("192.168.1.10", false);
+        // Explicitly set both layers to FAIL to make intent clear, even though
+        // initHost already initializes them to FAIL.
+        r.updateL2Fail("192.168.1.10");
+        r.updateL3Fail("192.168.1.10");
+
+        std::ostringstream os;
+        r.print(os);
+        std::string s = os.str();
+
+        if (s.find("192.168.1.10") == std::string::npos) {
+            TEST_FAIL("missing 192.168.1.10 in output");
+            return;
+        }
+        if (s.find("arp FAIL") == std::string::npos) {
+            TEST_FAIL("expected 'arp FAIL' for IPv4 host");
+            return;
+        }
+        if (s.find("icmpv4 FAIL") == std::string::npos) {
+            TEST_FAIL("expected 'icmpv4 FAIL' for IPv4 host");
+            return;
+        }
+        TEST_OK();
+    } catch (const std::exception &e) {
+        TEST_FAIL(e.what());
+    }
+}
+
+// IPv6 host – check that ndp/icmpv6 literals are used and statuses are OK
+static void test_results_store_ipv6_ok() {
+    TEST("ResultsStore: IPv6 host uses ndp/icmpv6 literals");
+    try {
+        ResultsStore r;
+        r.initHost("fd00::1", true);
+        r.updateL2Ok("fd00::1", "aa-bb-cc-dd-ee-ff");
+        r.updateL3Ok("fd00::1");
+
+        std::ostringstream os;
+        r.print(os);
+        std::string s = os.str();
+
+        if (s.find("fd00::1") == std::string::npos) {
+            TEST_FAIL("missing fd00::1 in output");
+            return;
+        }
+        if (s.find("ndp OK") == std::string::npos) {
+            TEST_FAIL("expected 'ndp OK' for IPv6 host");
+            return;
+        }
+        if (s.find("icmpv6 OK") == std::string::npos) {
+            TEST_FAIL("expected 'icmpv6 OK' for IPv6 host");
             return;
         }
         TEST_OK();
@@ -178,6 +247,7 @@ static void test_checksum_icmp_echo_request() {
 
 // --- 4. Invalid arguments (logic in main – test via exceptions / Scanner) --
 
+// Completely invalid IPv4 address and prefix should be rejected
 static void test_invalid_cidr_throws() {
     TEST("Invalid CIDR 999.999.999.999/99 → exception");
     try {
@@ -189,6 +259,7 @@ static void test_invalid_cidr_throws() {
     }
 }
 
+// CIDR string without slash should be rejected
 static void test_invalid_cidr_no_slash() {
     TEST("CIDR without slash → exception");
     try {
@@ -197,6 +268,65 @@ static void test_invalid_cidr_no_slash() {
         TEST_FAIL("expected exception when missing prefix");
     } catch (const std::exception &) {
         TEST_OK();
+    }
+}
+
+// Prefix length outside valid IPv4 range (0–32) should cause an exception
+static void test_invalid_cidr_prefix_too_large() {
+    TEST("CIDR with prefix > 32 for IPv4 → exception");
+    try {
+        Scanner sc("lo", 1000);
+        sc.addSubnet("192.168.0.0/33");
+        TEST_FAIL("expected exception when prefix length is too large");
+    } catch (const std::exception &) {
+        TEST_OK();
+    }
+}
+
+// Combined output format: "Scanning ranges" header, empty line, then host results
+static void test_combined_output_format() {
+    TEST("Combined output format: ranges summary, empty line, then per-host results");
+    try {
+        Scanner sc("lo", 1000);
+        sc.addSubnet("192.168.0.0/30");
+
+        std::ostringstream os;
+        sc.printScanningSummary(os);
+        os << "\n";
+
+        // Simulate one host result: arp OK with MAC, icmpv4 FAIL
+        ResultsStore &res = sc.results();
+        res.initHost("192.168.0.1", false);
+        res.updateL2Ok("192.168.0.1", "00-11-22-33-44-55");
+        res.updateL3Fail("192.168.0.1");
+        res.print(os);
+
+        std::string s = os.str();
+
+        // The very first line must be the literal "Scanning ranges:"
+        std::istringstream is(s);
+        std::string firstLine;
+        std::getline(is, firstLine);
+        if (firstLine != "Scanning ranges:") {
+            TEST_FAIL("first line must be exactly 'Scanning ranges:'");
+            return;
+        }
+
+        // There must be an empty line separating summary and results section
+        if (s.find("\n\n192.168.0.1") == std::string::npos) {
+            TEST_FAIL("expected empty line between summary and first host result");
+            return;
+        }
+
+        // Host result line must follow the exact format from README
+        if (s.find("192.168.0.1 arp OK (00-11-22-33-44-55), icmpv4 FAIL") == std::string::npos) {
+            TEST_FAIL("host result line does not match expected format");
+            return;
+        }
+
+        TEST_OK();
+    } catch (const std::exception &e) {
+        TEST_FAIL(e.what());
     }
 }
 
@@ -211,10 +341,14 @@ int main() {
     test_cidr_ipv6_126();
     test_cidr_summary_counts();
     test_results_store_update_no_duplicate();
+    test_results_store_fail_ipv4();
+    test_results_store_ipv6_ok();
     test_checksum_zeros();
     test_checksum_icmp_echo_request();
     test_invalid_cidr_throws();
     test_invalid_cidr_no_slash();
+    test_invalid_cidr_prefix_too_large();
+    test_combined_output_format();
 
     std::cout << "----------------------------------------\n";
     std::cout << "Total: " << tests_run << " tests, " << tests_failed << " failed.\n";
