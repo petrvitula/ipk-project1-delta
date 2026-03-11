@@ -154,8 +154,11 @@ void Scanner::initializePcap() {
     char errbuf[PCAP_ERRBUF_SIZE];
     std::memset(errbuf, 0, sizeof(errbuf));
 
-    // Snapshot length: BUFSIZ, promiscuous mode: 1, read timeout: timeoutMs_
-    pcapHandle_ = pcap_open_live(interface_.c_str(), BUFSIZ, 1, timeoutMs_, errbuf);
+    // Snapshot length: BUFSIZ, promiscuous mode: 1.
+    // Use a short read timeout (e.g. 100 ms) so packets are delivered promptly regardless of -w.
+    // -w controls how long run() waits for replies, not how long pcap blocks per read.
+    const int pcapReadTimeoutMs = 100;
+    pcapHandle_ = pcap_open_live(interface_.c_str(), BUFSIZ, 1, pcapReadTimeoutMs, errbuf);
     if (!pcapHandle_) {
         std::ostringstream oss;
         oss << "pcap_open_live failed on interface '" << interface_ << "': " << errbuf;
