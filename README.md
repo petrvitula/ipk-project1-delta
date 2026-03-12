@@ -1,114 +1,189 @@
-# Project 1 - DELTA: L2/L3 Scanner
+IPK Project 1 – L2/L3 Network Scanner
+=====================================
 
-- Contact person: pluskal@vut.cz
-- Automated testing: ivondracek@fit.vut.cz
+Overview
+--------
 
-## Assignment
-1. Create a simple network ICMP(v6), ARP/NDP scanner. The program discovers what devices are available from a selected range of IP addresses. It prints to standard output the availability status of the given IP addresses at the L2 and L3 layers.
-2. Create relevant tests for the project.
+This project implements a simple L2/L3 host discovery scanner for IPv4 and IPv6 as required by the IPK Project 1 assignment. The application sends ARP/NDP requests on the local link and ICMP echo requests (IPv4/IPv6) to discover reachable hosts in configured subnets and prints a summary of scanned ranges together with per‑host results.
 
-## Specification
-The application scans for presence of L2 and L3 devices on given network segment(s). 
+The implementation is Linux‑only and targets the official IPK reference virtual machine. It uses raw sockets (ARP, ICMPv4, ICMPv6) and `libpcap` for passive packet capture.
 
-Packets/Frames should be sent using raw sockets. If needed, you can eavesdrop on the responses using the libpcap library.
+Build and Run
+-------------
 
-The program can be terminated at any given moment with `SIGTERM` or `SIGINT` signals (<kbd>Ctrl</kbd> + <kbd>C</kbd> sequence).
+**Prerequisites (reference environment):**
 
-Scanning should be done and return results as fast as possible. During development and testing, try scanning only the computers you own or manage.
+- IPK reference devShell `c` (C/C++ environment with `g++`, `libpcap`, make, etc.).
+- Linux with root privileges for raw sockets and packet capture.
 
-### Synopsis
-```
-./ipk-L2L3-scan -i INTERFACE [-s SUBNET]... [-w TIMEOUT] [-h | --help]
-```
-```
-./ipk-L2L3-scan -i
-```
-```
-./ipk-L2L3-scan -h
-```
-```
-./ipk-L2L3-scan --help
+**Select devShell (required by guidelines):**
+
+```bash
+make NixDevShellName
 ```
 
-where:
+This prints `c`, which is used by the IPK infrastructure to activate the correct devShell.
 
-* `-h`/`--help` writes usage instructions to `stdout` and terminates with `0` exit code.
-* `-i eth0` (just one interface to scan through).
-  * If `-i` is specified without a value (and any other parameters are unspecified), a list of active interfaces is printed to `stdout` and the program terminates with `0` exit code (additional information beyond the interface list is welcome but not required).
-* `-w 3000` is the timeout in milliseconds to wait for a response during a single port scan. This parameter is optional, in its absence the value 1000 (i.e., one second) is used.
-* `-s 192.168.1.0/24` or `-s fd00:cafe:0000:face::0/120` specifies which segments to scan using IPv4 or IPv6. There can be multiple segments to be scanned (i.e., **the `-s` argument can be repeated** when the program is called).
-  * The application must be able to infer the correct network address and the resulting number of hosts to be scanned from the user input of the `-s` argument.
-  * The application does not have to deal with the "bloat" of the `-s` argument input with respect to the number of hosts being scanned (e.g., too short netmask or prefix length, for instance `-s 10.0.0.0/8`) or the location of the segment being scanned (i.e., attempting to ARP scan a network to which the computer is not directly connected).
-* All arguments can be in any order.
+**Build:**
 
-### Execution Examples
-```
-./ipk-L2L3-scan -i eth0 -w 1000 -s 192.168.0.0/25 -s 192.168.128.0/29
-./ipk-L2L3-scan -i eth0 -w 1000 -s fd00:cafe:0000:face::0/120
+```bash
+make
 ```
 
-### Functionality Illustration
-```sh
-./ipk-L2L3-scan -i eth0 -w 1000 -s 192.168.0.5/25 -s 192.168.0.128/29 -s fd00:cafe:0000:face::1/126
-```
-```
-Scanning ranges:
-192.168.0.0/25 126
-192.168.0.128/29 6
-fd00:cafe:0000:face::0/126 3
+This produces the executable `./ipk-L2L3-scan` in the project root as required by the assignment.
 
-192.168.0.1 arp OK (00-50-56-f1-c7-1b), icmpv4 OK
-192.168.0.2 arp OK (00-22-14-ec-46-bb), icmpv4 FAIL
-192.168.0.3 arp FAIL, icmpv4 FAIL
-...
-fd00:cafe:0000:face::1 ndp OK (00-50-56-f1-c7-1b), icmpv6 OK
-fd00:cafe:0000:face::2 ndp FAIL, icmpv6 FAIL
-fd00:cafe:0000:face::3 ndp OK (a8-5e-45-af-7c-60), icmpv6 FAIL
+**Run:**
+
+```bash
+sudo ./ipk-L2L3-scan -i INTERFACE [-s SUBNET]... [-w TIMEOUT]
 ```
 
-### Output Format
+- `-i INTERFACE` – name of the network interface (e.g. `eth0`, `enp0s3`).
+- `-s SUBNET` – IPv4/IPv6 subnet in CIDR notation (e.g. `192.168.1.0/24`, `fd00::1/126`), may be repeated.
+- `-w TIMEOUT` – overall wait time in milliseconds after sending probes, before finalizing FAIL statuses.
 
-> ⚠️ <span style="color:orange"> The application is going to be subject to automated testing. It is of utmost importance for the application to write the result to `stdout` exactly as specified.</span>
+The program also supports:
 
-Program output (`stdout`) consists of 2 ordered sections: 1) scanning ranges summary, then 2) scan results. These sections are separated by an empty line.
+- `./ipk-L2L3-scan -i` – list non‑loopback interfaces (printed to stdout).
+- `./ipk-L2L3-scan -h` or `./ipk-L2L3-scan --help` – show detailed usage (printed to stdout).
 
-The scan ranges summary section starts with a literal `Scanning ranges:` single line. The following lines in this section (individual lines in any order) each contain two values separated by space (` `): IP address of scanned network (IPv4 or IPv6 with prefix length), and number of usable hosts in the network.
+Implemented Features and Behavior
+---------------------------------
 
-The scan results section consists of one or more lines. Individual lines can be in any order. Each line starts with the scanned host IP address followed by ` ` and ARP/ND scan, then followed by `, ` and ICMP/ICMPv6 scan. Scan results must be marked by `arp`/`ndp`/`icmpv4`/`icmpv6` literals. ARP/ND scan result is either `OK` followed by space ` ` with MAC address in parentheses or `FAIL`. ICMP/ICMPv6 scan result is either `OK` or `FAIL`.
+- **Interface discovery**:
+  - Lists non‑loopback interfaces using `libpcap` (`Scanner::listInterfaces`).
+  - For the selected interface, retrieves MAC address, IPv4/IPv6 addresses and ifindex via `ioctl`/`getifaddrs`.
 
-```sh
-./ipk-L2L3-scan -i eth0 -s 192.168.0.1/30
+- **CIDR parsing and host generation**:
+  - Supports IPv4 and IPv6 CIDR notation.
+  - Correct handling of special IPv4 prefixes:
+    - `/32`: exactly one host – the given address.
+    - `/31`: RFC 3021 point‑to‑point, **both** addresses are usable.
+    - Other prefixes: `2^(32-prefix) - 2` usable hosts (network and broadcast excluded).
+  - IPv6:
+    - `/128`: exactly one host – the given address.
+    - Other prefixes: `2^(128-prefix) - 1` usable hosts (network address excluded) to match the assignment README example for `/126`.
+  - Generated host lists are deterministic and used both by the sender and by unit tests.
+
+- **Protection against huge ranges (design decision)**:
+  - To avoid freezes and out‑of‑memory situations on very large subnets (e.g. `/8`), each `-s` subnet is limited to at most **65 536 usable hosts**.
+  - If this limit would be exceeded, the scanner throws `std::invalid_argument` with a descriptive message and exits with a non‑zero status.
+
+- **Packet sending**:
+  - ARP requests (IPv4) are sent using an `AF_PACKET` raw socket with Ethernet frames constructed in `Packets.cpp`.
+  - ICMPv4 echo requests:
+    - Sent via `AF_INET` raw socket bound to the selected interface (using `SO_BINDTODEVICE`) and to the interface IPv4 address.
+    - Uses a process‑wide ICMP identifier derived from `getpid()`, matching replies in `pcapCallback`.
+  - NDP (IPv6):
+    - Sends Neighbor Solicitation messages to the solicited‑node multicast address `ff02::1:ffXX:XXXX`.
+  - ICMPv6 echo requests:
+    - Sent via `AF_INET6` raw socket bound to the interface IPv6 address and scope id.
+    - ICMPv6 checksum is calculated over the IPv6 pseudo‑header.
+
+- **Packet capture and reply processing**:
+  - Uses `libpcap` in a dedicated receive thread.
+  - Supports multiple link‑layer types:
+    - Ethernet (`DLT_EN10MB`), VLAN‑tagged Ethernet, Linux cooked capture v1 (`DLT_LINUX_SLL`), Linux cooked capture v2 (`DLT_LINUX_SLL2`).
+  - Correct parsing of EtherType and dynamic offset based on link type and presence of 802.1Q tags.
+  - ARP Reply:
+    - Extracts sender IPv4 and MAC address, marks `arp OK` for that IPv4 host.
+  - IPv4 ICMP:
+    - Recognizes ICMP Echo Reply (type 0) with matching identifier.
+    - Marks `icmpv4 OK` for the source IPv4 address.
+  - IPv6:
+    - NDP Neighbor Advertisement:
+      - Parses Target Link‑Layer Address option (type 2) when present.
+      - Falls back to link‑layer source MAC when the option is missing.
+      - Marks `ndp OK` for the target IPv6 address.
+    - ICMPv6 Echo Reply:
+      - Marks `icmpv6 OK` for the source IPv6 address.
+
+- **Timeout behavior**:
+  - The `-w TIMEOUT` argument controls how long, after sending all probes, the scanner keeps waiting for replies before finalizing results.
+  - Replies are processed and statuses (`OK`) are updated **immediately** when packets are captured.
+  - Hosts that never receive a matching reply remain in the default `FAIL` state after the timeout expires.
+  - `libpcap` uses its own small read timeout (100 ms) so packet delivery is prompt even for large `-w` values.
+
+Important Design Decisions
+--------------------------
+
+The assignment allows several behaviors to be chosen by the student. The following decisions are **intentional** and are documented here as required by the guidelines:
+
+1. **Limit on hosts per subnet**  
+   - Decision: limit each `-s` subnet to at most **65 536 usable hosts**.  
+   - Rationale: protects the application and the reference VM from freezes and excessive memory usage when scanning very large ranges (for example, `10.0.0.0/8`).  
+   - Behavior: if the limit would be exceeded, the application prints an error (to stderr) and exits with a non‑zero code.
+
+2. **IPv4 `/31` semantics**  
+   - Decision: follow RFC 3021 – both addresses in `/31` are treated as usable hosts.  
+   - Rationale: this is common for point‑to‑point links (no traditional broadcast address).
+
+3. **IPv6 usable host count**  
+   - Decision: for prefixes other than `/128`, the scanner uses `2^(hostBits) - 1` usable hosts (excluding only the network address).  
+   - Rationale: matches the IPv6 `/126` example in the project README and keeps behavior simple and predictable.
+
+4. **Interface selection and Linux‑only behavior**  
+   - Decision: the implementation uses Linux‑specific APIs (`AF_PACKET`, `SO_BINDTODEVICE`, `pcap_datalink` with Linux SLL types).  
+   - Rationale: the assignment is evaluated on the Linux reference VM; this simplifies the implementation and packet handling.
+
+5. **ICMPv4 reply handling source**  
+   - Decision: ICMPv4 replies are detected exclusively via `libpcap` (no `recvfrom` on the raw socket).  
+   - Rationale: ensures a single, consistent code path for reply processing and avoids double handling and timeout inconsistencies.
+
+Testing
+-------
+
+Automated tests are implemented in the `tests` directory and are run via:
+
+```bash
+make test
 ```
-```
-Scanning ranges:
-192.168.0.0/30 2
 
-192.168.0.1 arp OK (00-50-56-f1-c7-1b), icmpv4 OK
-192.168.0.2 arp OK (00-22-14-ec-46-bb), icmpv4 FAIL
-```
+This builds `ipk-L2L3-scan-test` and executes a set of C++ unit tests. No root privileges or real network traffic are required for these tests.
 
-```sh
-./ipk-L2L3-scan -i eth0 -s 192.168.0.1/30 -s 192.168.0.130/29
-```
-```
-Scanning ranges:
-192.168.0.0/30 2
-192.168.0.128/29 6
+**Tested functionality (examples):**
 
-192.168.0.1 arp OK (00-50-56-f1-c7-1b), icmpv4 OK
-192.168.0.2 arp OK (00-22-14-ec-46-bb), icmpv4 FAIL
-192.168.0.129 arp FAIL, icmpv4 FAIL
-192.168.0.130 arp FAIL, icmpv4 FAIL
-192.168.0.131 arp FAIL, icmpv4 FAIL
-192.168.0.132 arp FAIL, icmpv4 FAIL
-192.168.0.133 arp FAIL, icmpv4 FAIL
-192.168.0.134 arp FAIL, icmpv4 FAIL
-```
+- **CIDR parsing and host generation:**
+  - IPv4 `/30`, `/32`, `/31`, `/29`, `/25` – number of usable hosts, correct host ranges.
+  - IPv6 `/126`, `/128` – usable host counts consistent with the assignment examples.
+  - Summary lines printed by `Scanner::printScanningSummary` contain the expected host counts.
 
-## Bibliography
+- **Results formatting:**
+  - Single IPv4/IPv6 host with various combinations of `OK`/`FAIL` at L2/L3 produces exactly the format required by the assignment (e.g. `arp OK (MAC), icmpv4 FAIL`, `ndp OK, icmpv6 OK`).
+  - Repeated updates for the same IP overwrite previous results instead of duplicating lines.
 
-* RFC 792: Internet Control Message Protocol, 1981. Online. Request for Comments. Internet Engineering Task Force. [Accessed 17 February 2025]. 
-* GUPTA, Mukesh and CONTA, Alex, 2006. RFC 4443: Internet Control Message Protocol (ICMPv6) for the Internet Protocol Version 6 (IPv6) Specification. Online. Request for Comments. Internet Engineering Task Force. [Accessed 17 February 2025]. 
-* SIMPSON, William A., NARTEN, Thomas, NORDMARK, Erik and SOLIMAN, Hesham, 2007. RFC 4861: Neighbor Discovery for IP version 6 (IPv6). Online. Request for Comments. Internet Engineering Task Force. [Accessed 17 February 2025]. 
-* RFC 826: An Ethernet Address Resolution Protocol: Or Converting Network Protocol Addresses to 48.bit Ethernet Address for Transmission on Ethernet Hardware, 1982. Online. Request for Comments. Internet Engineering Task Force. [Accessed 17 February 2025]. 
-* Host Discovery Techniques | Nmap Network Scanning. Online. Available from: https://nmap.org/book/host-discovery-techniques.html [Accessed 17 February 2025]. 
+- **Checksums and packet helpers:**
+  - `inetChecksum` is tested on known ICMP echo request values and all‑zero buffers to verify RFC 1071 behavior.
+  - ICMPv4/ICMPv6 echo request structures and ARP/NDP frame builders are validated at the byte level.
+
+- **Input validation and error handling:**
+  - Invalid CIDR strings (missing slash, invalid address, invalid prefix) throw exceptions and lead to non‑zero exit codes.
+  - Output format is verified to contain the `Scanning ranges:` header, an empty line, and then host results.
+
+**Test environment:**
+
+- All automated tests run inside the reference `c` devShell without requiring root or access to live network interfaces.
+- For manual integration tests, the scanner was validated on Linux with virtualized networks (QEMU/VirtualBox), using `tcpdump` to inspect ARP/ICMP traffic and confirm packet structure.
+
+Known Limitations
+-----------------
+
+- **Linux‑only implementation**  
+  The scanner uses Linux‑specific APIs (`AF_PACKET`, `SO_BINDTODEVICE`, Linux SLL link types). Other operating systems are not supported.
+
+- **Per‑subnet host limit**  
+  Subnets with more than **65 536 usable hosts** are rejected with an error. This is a deliberate safety limit, not a bug.
+
+- **Environment‑dependent ICMPv4 replies**  
+  Some network environments (for example, certain virtualized gateways) selectively ignore ICMP echo requests sent from raw sockets even though they reply to the standard `ping(8)` utility. In such cases the scanner may legitimately report `icmpv4 FAIL` even though `ping` appears to work. The implementation has been validated at the packet level using `tcpdump`; this is considered an environmental limitation.
+
+Apart from the limitations explicitly listed above, **no other known limitations** are present at the time of submission.
+
+References
+----------
+
+- IPK Project Guidelines and assignment text (NES@FIT, VUT Brno).
+- `man 7 raw`, `man 7 packet`, `man 7 ip`, `man 7 icmp`, `man 7 icmp6`.
+- `libpcap` documentation and examples.
+- RFC 1071 – Computing the Internet Checksum.
+- RFC 3021 – Using 31‑Bit Prefixes on IPv4 Point‑to‑Point Links.

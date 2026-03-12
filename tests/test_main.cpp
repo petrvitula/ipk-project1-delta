@@ -14,8 +14,8 @@
 #include <string>
 #include <cstring>
 
-static int tests_run = 0;
-static int tests_failed = 0;
+int tests_run = 0;
+int tests_failed = 0;
 
 #define TEST(name) do { \
     ++tests_run; \
@@ -25,6 +25,10 @@ static int tests_failed = 0;
 
 #define TEST_OK() do { std::cout << "OK\n"; } while(0)
 #define TEST_FAIL(msg) do { ++tests_failed; std::cout << "FAIL: " << (msg) << "\n"; } while(0)
+
+// Additional tests implemented in separate translation unit.
+// Declared here so we can call them from main().
+void run_additional_tests();
 
 // --- 1. Parsing CIDR ------------------------------------------------------
 
@@ -349,6 +353,9 @@ int main() {
     test_invalid_cidr_no_slash();
     test_invalid_cidr_prefix_too_large();
     test_combined_output_format();
+
+    // Run any additional tests defined in tests/test_additional.cpp
+    run_additional_tests();
 
     std::cout << "----------------------------------------\n";
     std::cout << "Total: " << tests_run << " tests, " << tests_failed << " failed.\n";

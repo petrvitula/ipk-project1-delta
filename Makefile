@@ -25,6 +25,9 @@ TEST_OBJECTS = $(OBJ_DIR)/Scanner.o $(OBJ_DIR)/Results.o $(OBJ_DIR)/Packets.o $(
 
 all: $(TARGET)
 
+NixDevShellName:
+	@echo c
+
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
@@ -37,13 +40,16 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(OBJ_DIR)/test_main.o: $(TEST_DIR)/test_main.cpp
 	$(CC) $(CFLAGS) -I$(INC_DIR) -c $< -o $@
 
-$(TEST_TARGET): $(OBJ_DIR) $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o
-	$(CC) $(CFLAGS) -o $@ $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o $(LDFLAGS)
+$(OBJ_DIR)/test_additional.o: $(TEST_DIR)/test_additional.cpp
+	$(CC) $(CFLAGS) -I$(INC_DIR) -c $< -o $@
+
+$(TEST_TARGET): $(OBJ_DIR) $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o $(OBJ_DIR)/test_additional.o
+	$(CC) $(CFLAGS) -o $@ $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o $(OBJ_DIR)/test_additional.o $(LDFLAGS)
 
 test: $(TEST_TARGET)
 	@./$(TEST_TARGET)
 
-.PHONY: clean test
+.PHONY: clean test NixDevShellName
 
 clean:
 	rm -rf $(OBJ_DIR) $(TARGET) $(TEST_TARGET)
