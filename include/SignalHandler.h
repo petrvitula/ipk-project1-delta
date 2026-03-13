@@ -1,3 +1,9 @@
+/**
+ * @file SignalHandler.h
+ * @brief Header file for the SignalHandler class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #pragma once
 
 #include <atomic>

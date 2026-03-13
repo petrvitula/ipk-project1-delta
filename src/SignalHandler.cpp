@@ -1,3 +1,9 @@
+/**
+ * @file SignalHandler.cpp
+ * @brief Implementation file for the SignalHandler class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #include "SignalHandler.h"
 
 #include <csignal>

@@ -1,3 +1,9 @@
+/**
+ * @file Results.h
+ * @brief Header file for the Results class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #pragma once
 
 #include <string>
@@ -6,28 +12,33 @@
 #include <vector>
 #include <iosfwd>
 
+// L2Type represents the type of Layer 2 protocol used to discover the host
 enum class L2Type {
     Arp,
     Ndp
 };
 
+// L3Type represents the type of Layer 3 protocol used to discover the host
 enum class L3Type {
     Icmpv4,
     Icmpv6
 };
 
+// L2Status represents the status of the Layer 2 discovery
 enum class L2Status {
     Unknown,
     Ok,
     Fail
 };
 
+// L3Status represents the status of the Layer 3 discovery
 enum class L3Status {
     Unknown,
     Ok,
     Fail
 };
 
+// HostResult represents the result of the discovery of a host
 struct HostResult {
     std::string ip;
     L2Type l2Type{L2Type::Arp};
@@ -37,6 +48,7 @@ struct HostResult {
     L3Status l3Status{L3Status::Fail};
 };
 
+// ResultsStore is a class that stores the results of the discovery of hosts
 class ResultsStore {
 public:
     ResultsStore() = default;

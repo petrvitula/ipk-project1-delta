@@ -1,3 +1,9 @@
+/**
+ * @file Packets.h
+ * @brief Header file for the Packets class
+ * @author Petr Vitula (xvitulp00)
+ */
+
 #pragma once
 
 #include <cstdint>

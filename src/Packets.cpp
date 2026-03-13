@@ -1,3 +1,9 @@
+/**
+ * @file Packets.cpp
+ * @brief Implementation file for the Packets class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #include "Packets.h"
 #include <cstring>
 #include <arpa/inet.h>

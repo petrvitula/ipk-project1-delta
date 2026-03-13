@@ -1,8 +1,9 @@
 /**
- * Additional unit tests for IPK L2/L3 Scanner.
- * Doplňují test_main.cpp o chybějící případy.
- * Přidej volání funkcí z tohoto souboru do main() v test_main.cpp.
+ * @file test_additional.cpp
+ * @brief Additional tests for the ipk-L2L3-scan program
+ * @author Petr Vitula (xvitulp00)
  */
+ 
 
 #include "Scanner.h"
 #include "Results.h"
@@ -16,7 +17,7 @@
 #include <vector>
 #include <arpa/inet.h>
 
-// (předpokládáme že TEST/TEST_OK/TEST_FAIL jsou definovány v test_main.cpp)
+// TEST/TEST_OK/TEST_FAIL are defined in test_main.cpp
 extern int tests_run;
 extern int tests_failed;
 
@@ -30,12 +31,12 @@ extern int tests_failed;
 #define TEST_FAIL(msg) do { ++tests_failed; std::cout << "FAIL: " << (msg) << "\n"; } while(0)
 
 // =============================================================================
-// 1. CIDR normalizace
+// 1. CIDR normalization
 // =============================================================================
 
-// README explicitně zmiňuje: "192.168.0.5/25" -> network "192.168.0.0/25"
+// README explicitly mentions: "192.168.0.5/25" -> network "192.168.0.0/25"
 static void test_cidr_normalization_ipv4() {
-    TEST("CIDR normalizace: 192.168.0.5/25 → síťová adresa 192.168.0.0/25");
+    TEST("CIDR normalization: 192.168.0.5/25 → network address 192.168.0.0/25");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.0.5/25");
@@ -43,11 +44,11 @@ static void test_cidr_normalization_ipv4() {
         sc.printScanningSummary(os);
         std::string s = os.str();
         if (s.find("192.168.0.0/25") == std::string::npos) {
-            TEST_FAIL("očekáváno '192.168.0.0/25', dostali jsme: " + s);
+            TEST_FAIL("expected '192.168.0.0/25', got: " + s);
             return;
         }
         if (s.find("192.168.0.5") != std::string::npos) {
-            TEST_FAIL("originální adresa 192.168.0.5 nesmí být v summary");
+            TEST_FAIL("original address 192.168.0.5 must not be in summary");
             return;
         }
         TEST_OK();
@@ -56,7 +57,7 @@ static void test_cidr_normalization_ipv4() {
     }
 }
 
-// /31 je RFC 3021 – oba hosté jsou použitelní (base+0 a base+1)
+// /31 is RFC 3021 – both hosts are usable (base+0 and base+1)
 static void test_cidr_ipv4_31() {
     TEST("CIDR 10.0.0.0/31 → 2 hosts: 10.0.0.0 a 10.0.0.1");
     try {
@@ -79,9 +80,9 @@ static void test_cidr_ipv4_31() {
     }
 }
 
-// /29 → hosté .1 až .6, .0 (síť) a .7 (broadcast) nesmí být zahrnuty
+// /29 → hosts .1 to .6, .0 (network) and .7 (broadcast) must not be included
 static void test_cidr_ipv4_29_host_range() {
-    TEST("CIDR 10.0.0.0/29 → hosté .1 až .6, bez .0 a .7");
+    TEST("CIDR 10.0.0.0/29 → hosts .1 to .6, without .0 and .7");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("10.0.0.0/29");
@@ -91,8 +92,8 @@ static void test_cidr_ipv4_29_host_range() {
             return;
         }
         for (auto &h : hosts) {
-            if (h == "10.0.0.0") { TEST_FAIL("síťová adresa 10.0.0.0 nesmí být v listu"); return; }
-            if (h == "10.0.0.7") { TEST_FAIL("broadcast 10.0.0.7 nesmí být v listu"); return; }
+            if (h == "10.0.0.0") { TEST_FAIL("network address 10.0.0.0 must not be in list"); return; }
+            if (h == "10.0.0.7") { TEST_FAIL("broadcast 10.0.0.7 must not be in list"); return; }
         }
         TEST_OK();
     } catch (const std::exception &e) {
@@ -100,9 +101,9 @@ static void test_cidr_ipv4_29_host_range() {
     }
 }
 
-// /25 → 126 hosts (README příklad)
+// /25 → 126 hosts (README example)
 static void test_cidr_ipv4_25_count() {
-    TEST("CIDR 192.168.0.0/25 → 126 hosts (README příklad)");
+    TEST("CIDR 192.168.0.0/25 → 126 hosts (README example)");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.0.0/25");
@@ -117,7 +118,7 @@ static void test_cidr_ipv4_25_count() {
     }
 }
 
-// /128 → přesně 1 host = ta samotná adresa
+// /128 → exactly 1 host = the same address
 static void test_cidr_ipv6_128() {
     TEST("CIDR fd00::cafe/128 → 1 host = fd00::cafe");
     try {
@@ -147,7 +148,7 @@ static void test_cidr_ipv6_summary() {
         std::ostringstream os;
         sc.printScanningSummary(os);
         std::string s = os.str();
-        // inet_ntop komprimuje, takže "fd00::/126"
+        // inet_ntop compresses, so "fd00::/126"
         if (s.find("/126 3") == std::string::npos) {
             TEST_FAIL("expected '/126 3' in summary, got: " + s);
             return;
@@ -159,17 +160,17 @@ static void test_cidr_ipv6_summary() {
 }
 
 // =============================================================================
-// 2. ResultsStore: kombinace L2/L3 stavů
+// 2. ResultsStore: combination of L2/L3 states
 // =============================================================================
 
-// arp OK ale icmpv4 FAIL (běžný případ – host existuje ale blokuje ping)
+// arp OK but icmpv4 FAIL (common case – host exists but blocks ping)
 static void test_results_arp_ok_icmp_fail() {
-    TEST("ResultsStore: arp OK + icmpv4 FAIL → správný výstup");
+    TEST("ResultsStore: arp OK + icmpv4 FAIL → correct output");
     try {
         ResultsStore r;
         r.initHost("10.0.0.1", false);
         r.updateL2Ok("10.0.0.1", "de-ad-be-ef-00-01");
-        // L3 zůstane FAIL (initHost defaultuje na FAIL)
+        // L3 remains FAIL (initHost defaults to FAIL)
 
         std::ostringstream os;
         r.print(os);
@@ -189,9 +190,9 @@ static void test_results_arp_ok_icmp_fail() {
     }
 }
 
-// arp FAIL ale icmpv4 OK (méně běžný ale validní případ)
+// arp FAIL but icmpv4 OK (less common but valid case)
 static void test_results_arp_fail_icmp_ok() {
-    TEST("ResultsStore: arp FAIL + icmpv4 OK → správný výstup");
+    TEST("ResultsStore: arp FAIL + icmpv4 OK → correct output");
     try {
         ResultsStore r;
         r.initHost("10.0.0.2", false);
@@ -216,9 +217,9 @@ static void test_results_arp_fail_icmp_ok() {
     }
 }
 
-// MAC musí být lowercase a oddělený pomlčkami (ne dvojtečkami)
+// MAC must be lowercase and separated by hyphens (not colons)
 static void test_results_mac_format() {
-    TEST("ResultsStore: MAC formát je lowercase hex s pomlčkami (00-1a-2b-3c-4d-5e)");
+    TEST("ResultsStore: MAC format is lowercase hex with hyphens (00-1a-2b-3c-4d-5e)");
     try {
         ResultsStore r;
         r.initHost("10.1.1.1", false);
@@ -232,9 +233,9 @@ static void test_results_mac_format() {
             TEST_FAIL("expected lowercase dash-separated MAC, got: " + s);
             return;
         }
-        // Nesmí obsahovat dvojtečky
+        // Must not contain colons
         if (s.find("00:1a") != std::string::npos) {
-            TEST_FAIL("MAC nesmí obsahovat dvojtečky");
+            TEST_FAIL("MAC must not contain colons");
             return;
         }
         TEST_OK();
@@ -243,9 +244,9 @@ static void test_results_mac_format() {
     }
 }
 
-// Více hostů – každý na vlastním řádku
+// Multiple hosts – each on its own line
 static void test_results_multiple_hosts() {
-    TEST("ResultsStore: více hostů → každý na vlastním řádku");
+    TEST("ResultsStore: multiple hosts → each on its own line");
     try {
         ResultsStore r;
         r.initHost("10.0.0.1", false);
@@ -258,7 +259,7 @@ static void test_results_multiple_hosts() {
         r.print(os);
         std::string s = os.str();
 
-        // Spočítej řádky – musí být 3
+        // Count lines – must be 3
         int lines = 0;
         for (char c : s) if (c == '\n') ++lines;
         if (lines != 3) {
@@ -275,9 +276,9 @@ static void test_results_multiple_hosts() {
 // 3. Packet building
 // =============================================================================
 
-// ARP frame musí mít správnou délku a broadcast dst MAC
+// ARP frame must have the correct length and broadcast dst MAC
 static void test_arp_frame_structure() {
-    TEST("buildArpRequestFrame: délka 42B, dst=broadcast, ethertype=0x0806");
+    TEST("buildArpRequestFrame: length 42B, dst=broadcast, ethertype=0x0806");
     try {
         std::uint8_t ourMac[6]    = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
         std::uint8_t ourIp[4]     = {10, 0, 0, 1};
@@ -296,12 +297,12 @@ static void test_arp_frame_structure() {
                 return;
             }
         }
-        // EtherType = 0x0806 (ARP) v network byte order = [0x08, 0x06]
+        // EtherType = 0x0806 (ARP) in network byte order = [0x08, 0x06]
         if (frame[12] != 0x08 || frame[13] != 0x06) {
             TEST_FAIL("EtherType mismatch: expected 08 06");
             return;
         }
-        // ARP op = request (1) v network order = [0x00, 0x01]
+        // ARP op = request (1) in network order = [0x00, 0x01]
         if (frame[20] != 0x00 || frame[21] != 0x01) {
             TEST_FAIL("ARP op mismatch: expected 00 01 (request)");
             return;
@@ -312,7 +313,7 @@ static void test_arp_frame_structure() {
     }
 }
 
-// ICMPv4 echo request musí mít type=8, code=0, nenulový checksum
+// ICMPv4 echo request must have type=8, code=0, non-zero checksum
 static void test_icmpv4_echo_request_structure() {
     TEST("buildIcmpv4EchoRequest: type=8, code=0, checksum≠0");
     try {
@@ -332,10 +333,10 @@ static void test_icmpv4_echo_request_structure() {
         }
         uint16_t checksum = (static_cast<uint16_t>(buf[2]) << 8) | buf[3];
         if (checksum == 0) {
-            TEST_FAIL("checksum je 0 (pravděpodobně nevypočítán)");
+            TEST_FAIL("checksum is 0 (probably not calculated)");
             return;
         }
-        // Ověření: checksum přes celý paket musí dát 0 (RFC 1071)
+        // Verification: checksum through the entire packet must give 0 (RFC 1071)
         uint32_t sum = 0;
         for (size_t i = 0; i + 1 < buf.size(); i += 2) {
             sum += (static_cast<uint16_t>(buf[i]) << 8) | buf[i+1];
@@ -344,7 +345,7 @@ static void test_icmpv4_echo_request_structure() {
         while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
         uint16_t result = static_cast<uint16_t>(~sum);
         if (result != 0 && result != 0xFFFF) {
-            TEST_FAIL("checksum ověření selhalo, result=0x" + 
+            TEST_FAIL("checksum verification failed, result=0x" + 
                       std::to_string(result));
             return;
         }
@@ -354,11 +355,11 @@ static void test_icmpv4_echo_request_structure() {
     }
 }
 
-// inetChecksum: ověření pomocí known-good ICMP Echo Request hodnoty
+// inetChecksum: verification using known-good ICMP Echo Request value
 static void test_checksum_known_value() {
-    TEST("inetChecksum: known-good ICMP Echo Request → checksum ověřen");
+    TEST("inetChecksum: known-good ICMP Echo Request → checksum verified");
     // ICMP Echo Request: type=8, code=0, csum=0, id=0x0001, seq=0x0001, data="Hello"
-    // Správný checksum spočítaný ručně
+    // Correct checksum calculated manually
     std::uint8_t pkt[] = {
         0x08, 0x00,  // type=8, code=0
         0x00, 0x00,  // checksum placeholder
@@ -367,13 +368,13 @@ static void test_checksum_known_value() {
         0x48, 0x65, 0x6c, 0x6c, 0x6f  // "Hello"
     };
     std::uint16_t csum = inetChecksum(pkt, sizeof(pkt));
-    // Vlož checksum a ověř
+    // Insert checksum and verify
     pkt[2] = (csum >> 8) & 0xFF;
     pkt[3] = csum & 0xFF;
     std::uint16_t verify = inetChecksum(pkt, sizeof(pkt));
     if (verify != 0xFFFF && verify != 0x0000) {
         std::ostringstream msg;
-        msg << "checksum ověření selhalo: 0x" << std::hex << verify;
+        msg << "checksum verification failed: 0x" << std::hex << verify;
         TEST_FAIL(msg.str());
         return;
     }
@@ -384,9 +385,9 @@ static void test_checksum_known_value() {
 // 4. Output format edge cases
 // =============================================================================
 
-// Prázdný ResultsStore → prázdný výstup (žádné hosté)
+// Empty ResultsStore → empty output (no hosts)
 static void test_results_empty_store() {
-    TEST("ResultsStore: prázdný store → prázdný výstup");
+    TEST("ResultsStore: empty store → empty output");
     try {
         ResultsStore r;
         std::ostringstream os;
@@ -401,9 +402,9 @@ static void test_results_empty_store() {
     }
 }
 
-// Scanning ranges header musí začínat přesně "Scanning ranges:\n"
+// Scanning ranges header must start exactly with "Scanning ranges:\n"
 static void test_summary_header_format() {
-    TEST("printScanningSummary: začíná přesně 'Scanning ranges:\\n'");
+    TEST("printScanningSummary: starts exactly with 'Scanning ranges:\\n'");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("10.0.0.0/30");
@@ -421,11 +422,11 @@ static void test_summary_header_format() {
 }
 
 // =============================================================================
-// Entry point pro dodatečné testy
+// Entry point for additional tests
 // =============================================================================
 
 void run_additional_tests() {
-    std::cout << "\n--- Dodatečné testy (CIDR, ResultsStore, Packets) ---\n";
+    std::cout << "\n--- Additional tests (CIDR, ResultsStore, Packets) ---\n";
 
     // CIDR
     test_cidr_normalization_ipv4();

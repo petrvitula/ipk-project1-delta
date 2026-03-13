@@ -1,3 +1,9 @@
+/**
+ * @file Scanner.cpp
+ * @brief Implementation file for the Scanner class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #include "Scanner.h"
 #include "SignalHandler.h"
 
@@ -134,10 +140,12 @@ std::vector<std::string> Scanner::generateHostIps() const {
     return hosts;
 }
 
+// adds a subnet to the scanner
 void Scanner::addSubnet(const std::string &cidr) {
     ranges_.push_back(parseCidr(cidr));
 }
 
+// prints the scanning summary
 void Scanner::printScanningSummary(std::ostream &os) const {
     os << "Scanning ranges:\n";
     for (const auto &range : ranges_) {
@@ -370,6 +378,7 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         }
     }
 
+    // if the ethertype is arp and the length is greater than or equal to 28, update the l2 status to ok
     if (etherType == ntohs(ETHERTYPE_ARP) && len >= l2_start + 28) {
         const auto *arp = reinterpret_cast<const ArpPacket *>(bytes + l2_start);
         if (ntohs(arp->op) != ARP_OP_REPLY) { return; }
@@ -379,6 +388,7 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
 
+    // if the ethertype is ip and the length is greater than or equal to 20, update the l3 status to ok
     if (etherType == ntohs(ETHERTYPE_IP) && len >= l2_start + 20) {
         const auto *ip4 = reinterpret_cast<const Ipv4Header *>(bytes + l2_start);
 
@@ -404,6 +414,7 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
         return;
     }
 
+    // if the ethertype is ipv6 and the length is greater than or equal to 40, update the l3 status to ok
     if (etherType == ntohs(ETHERTYPE_IPV6) && len >= l2_start + 40) {
         const auto *ip6 = reinterpret_cast<const Ipv6Header *>(bytes + l2_start);
         if ((ntohl(ip6->versionTrafficFlow) >> 28) != 6 || ip6->nextHeader != IPPROTO_ICMPV6) { return; }
@@ -452,6 +463,7 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
     }
 }
 
+// lists all the interfaces
 void Scanner::listInterfaces(std::ostream &os) {
     char errbuf[PCAP_ERRBUF_SIZE];
     std::memset(errbuf, 0, sizeof(errbuf));
@@ -518,6 +530,7 @@ NetworkRange Scanner::parseCidr(const std::string &cidr) const {
     throw std::invalid_argument("Address is neither valid IPv4 nor IPv6: " + cidr);
 }
 
+// parses the ipv4 cidr
 NetworkRange Scanner::parseIpv4Cidr(const std::string &addrPart, std::uint8_t prefixLen) {
     struct in_addr addr{};
     if (inet_pton(AF_INET, addrPart.c_str(), &addr) != 1) {
@@ -564,6 +577,7 @@ NetworkRange Scanner::parseIpv4Cidr(const std::string &addrPart, std::uint8_t pr
     return range;
 }
 
+// parses the ipv6 cidr
 NetworkRange Scanner::parseIpv6Cidr(const std::string &addrPart, std::uint8_t prefixLen) {
     struct in6_addr addr{};
     if (inet_pton(AF_INET6, addrPart.c_str(), &addr) != 1) {
@@ -617,6 +631,7 @@ NetworkRange Scanner::parseIpv6Cidr(const std::string &addrPart, std::uint8_t pr
     return range;
 }
 
+// appends the ipv4 hosts to the vector
 void Scanner::appendIpv4Hosts(const NetworkRange &range, std::vector<std::string> &out) {
     auto slashPos = range.networkAddress.find('/');
     std::string addrPart = (slashPos == std::string::npos)
@@ -673,6 +688,7 @@ void Scanner::appendIpv4Hosts(const NetworkRange &range, std::vector<std::string
     }
 }
 
+// appends the ipv6 hosts to the vector
 void Scanner::appendIpv6Hosts(const NetworkRange &range, std::vector<std::string> &out) {
     auto slashPos = range.networkAddress.find('/');
     std::string addrPart = (slashPos == std::string::npos)

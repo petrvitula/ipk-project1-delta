@@ -1,8 +1,9 @@
 /**
- * Unit tests for IPK L2/L3 Scanner.
- * Run via: make test
- * No sudo or network interface needed (except for integration tests).
+ * @file test_main.cpp
+ * @brief Main tests for the ipk-L2L3-scan program
+ * @author Petr Vitula (xvitulp00)
  */
+ 
 
 #include "Scanner.h"
 #include "Results.h"

@@ -1,3 +1,9 @@
+/**
+ * @file main.cpp
+ * @brief Main file for the ipk-L2L3-scan program
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #include "Scanner.h"
 #include "SignalHandler.h"
 

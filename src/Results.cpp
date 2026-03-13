@@ -1,3 +1,9 @@
+/**
+ * @file Results.cpp
+ * @brief Implementation file for the Results class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #include "Results.h"
 
 #include <iostream>
@@ -29,6 +35,7 @@ void ResultsStore::initHost(const std::string &ip, bool isIPv6) {
     (void)getOrCreateUnsafe(ip, isIPv6);
 }
 
+// checks if the ip is an ipv6 address
 static bool isIPv6Address(const std::string &ip) {
     return ip.find(':') != std::string::npos;
 }
@@ -60,6 +67,7 @@ void ResultsStore::updateL3Fail(const std::string &ip) {
     hr.l3Status = L3Status::Fail;
 }
 
+// converts L2Type to a string literal
 const char *ResultsStore::l2TypeLiteral(L2Type t) {
     switch (t) {
     case L2Type::Arp:
@@ -70,6 +78,7 @@ const char *ResultsStore::l2TypeLiteral(L2Type t) {
     return "arp";
 }
 
+// converts L3Type to a string literal
 const char *ResultsStore::l3TypeLiteral(L3Type t) {
     switch (t) {
     case L3Type::Icmpv4:

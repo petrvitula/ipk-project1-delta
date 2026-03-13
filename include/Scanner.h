@@ -1,3 +1,9 @@
+/**
+ * @file Scanner.h
+ * @brief Header file for the Scanner class
+ * @author Petr Vitula (xvitulp00)
+ */
+ 
 #pragma once
 
 #include <string>
