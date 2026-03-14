@@ -2,8 +2,12 @@
  * @file Scanner.cpp
  * @brief Implementation file for the Scanner class
  * @author Petr Vitula (xvitulp00)
+ *
+ * Platform-dependent: Linux only. Uses AF_PACKET raw sockets, SO_BINDTODEVICE,
+ * ioctl(SIOCGIFHWADDR, SIOCGIFINDEX, SIOCGIFADDR), and libpcap with
+ * Linux cooked capture (DLT_LINUX_SLL, DLT_LINUX_SLL2).
  */
- 
+
 #include "Scanner.h"
 #include "SignalHandler.h"
 
@@ -15,7 +19,7 @@
 #include <thread>
 #include <chrono>
 
-// posix / linux networking
+// Linux-only networking: raw sockets, ioctl, packet capture
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -31,9 +35,13 @@
 
 #include <pcap.h>
 
+// =============================================================================
+// Interface info helpers (Linux-only: ioctl, getifaddrs)
+// =============================================================================
+
 namespace {
 
-// information about the selected interface needed to build frames and sockets
+// Information about the selected interface needed to build frames and sockets.
 struct InterfaceInfo {
     std::uint8_t mac[6]{};
     bool hasIpv4{false};
@@ -43,7 +51,7 @@ struct InterfaceInfo {
     int ifindex{-1};
 };
 
-// obtains mac, ipv4, ipv6 and interface index via ioctl/getifaddrs
+// Linux-only: obtains MAC, IPv4, IPv6 and interface index via ioctl(SIOCGIF*)/getifaddrs.
 InterfaceInfo getInterfaceInfo(const std::string &iface) {
     InterfaceInfo info{};
     const int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -111,6 +119,10 @@ std::string formatMac(const std::uint8_t mac[6]) {
 
 } // namespace
 
+// =============================================================================
+// Scanner: construction, public API (generateHostIps, addSubnet, run, etc.)
+// =============================================================================
+
 Scanner::Scanner(const std::string &iface, int timeoutMs)
     : interface_(iface), timeoutMs_(timeoutMs) {}
 
@@ -153,7 +165,11 @@ void Scanner::printScanningSummary(std::ostream &os) const {
     }
 }
 
-// opens a libpcap handle on the chosen interface for passive receive
+// -----------------------------------------------------------------------------
+// libpcap setup
+// -----------------------------------------------------------------------------
+
+// Opens a libpcap handle on the chosen interface for passive receive.
 void Scanner::initializePcap() {
     if (interface_.empty()) {
         throw std::runtime_error("No interface specified for pcap initialization");
@@ -213,7 +229,12 @@ void Scanner::run() {
     pcapThread.join();
 }
 
-// walks all hosts, builds arp/ndp + icmp probes and sends them via raw sockets
+// =============================================================================
+// Send loop: raw sockets, ARP/NDP/ICMP send (Linux-only)
+// =============================================================================
+
+// Walks all hosts, builds ARP/NDP + ICMP probes and sends them via raw sockets.
+// Linux-only: AF_PACKET (ARP), SO_BINDTODEVICE + bind (ICMPv4/ICMPv6).
 void Scanner::sendLoop() {
     InterfaceInfo ifinfo;
     try {
@@ -338,9 +359,13 @@ namespace {
 const std::uint16_t ETHERTYPE_VLAN = 0x8100;
 }
 
-// static callback used by libpcap for each captured frame
-// inspects ethertype/headers, recognizes replies and updates resultsStore
-// supports Ethernet (DLT_EN10MB), 802.1Q VLAN, and Linux cooked (DLT_LINUX_SLL)
+// =============================================================================
+// pcap callback: parse link-layer, recognize ARP/ICMPv4/NDP/ICMPv6 replies
+// =============================================================================
+
+// Static callback used by libpcap for each captured frame.
+// Platform: link-layer handling is Linux-oriented (DLT_EN10MB, 802.1Q VLAN,
+// DLT_LINUX_SLL, DLT_LINUX_SLL2). Inspects ethertype/headers and updates results.
 void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_char *bytes) {
     auto *self = reinterpret_cast<Scanner *>(user);
     if (self->stopRequested_.load() || gTerminate.load()) {
@@ -463,14 +488,17 @@ void Scanner::pcapCallback(u_char *user, const struct pcap_pkthdr *h, const u_ch
     }
 }
 
-// lists all the interfaces
+// -----------------------------------------------------------------------------
+// Interface listing (libpcap)
+// -----------------------------------------------------------------------------
+
 void Scanner::listInterfaces(std::ostream &os) {
     char errbuf[PCAP_ERRBUF_SIZE];
     std::memset(errbuf, 0, sizeof(errbuf));
 
     pcap_if_t *alldevs = nullptr;
     if (pcap_findalldevs(&alldevs, errbuf) == -1) {
-        os << "Error listing interfaces: " << errbuf << "\n";
+        std::cerr << "Error listing interfaces: " << errbuf << "\n";
         return;
     }
 
@@ -490,7 +518,11 @@ void Scanner::listInterfaces(std::ostream &os) {
     pcap_freealldevs(alldevs);
 }
 
-// Maximum hosts per subnet to avoid OOM/hang on huge ranges (e.g. 10.0.0.0/8)
+// =============================================================================
+// CIDR parsing and host list generation
+// =============================================================================
+
+// Maximum hosts per subnet to avoid OOM/hang on huge ranges (e.g. 10.0.0.0/8).
 constexpr std::uint64_t MAX_HOSTS_PER_SUBNET = 65536;
 
 NetworkRange Scanner::parseCidr(const std::string &cidr) const {

@@ -2,8 +2,10 @@
  * @file main.cpp
  * @brief Main file for the ipk-L2L3-scan program
  * @author Petr Vitula (xvitulp00)
+ *
+ * Platform: Linux only. Requires root for raw sockets and packet capture.
  */
- 
+
 #include "Scanner.h"
 #include "SignalHandler.h"
 
@@ -12,6 +14,7 @@
 #include <vector>
 #include <cstdlib>
 #include <stdexcept>
+#include <sysexits.h>
 
 // simple structure for parsed cli arguments
 struct Config {
@@ -65,7 +68,11 @@ static Config parseArguments(int argc, char **argv) {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("Option -w requires an argument");
             }
-            cfg.timeoutMs = std::stoi(argv[++i]);
+            try {
+                cfg.timeoutMs = std::stoi(argv[++i]);
+            } catch (const std::exception &) {
+                throw std::invalid_argument("Timeout must be a positive integer");
+            }
             if (cfg.timeoutMs <= 0) {
                 throw std::invalid_argument("Timeout must be a positive integer");
             }
@@ -97,13 +104,13 @@ int main(int argc, char **argv) {
         if (cfg.interface.empty()) {
             std::cerr << "Error: interface must be specified with -i.\n";
             printUsage(std::cerr);
-            return 1;
+            return EX_USAGE;
         }
 
         if (cfg.subnets.empty()) {
             std::cerr << "Error: at least one -s SUBNET must be specified.\n";
             printUsage(std::cerr);
-            return 1;
+            return EX_USAGE;
         }
 
         // set up signal handlers for sigint/sigterm
@@ -129,9 +136,14 @@ int main(int argc, char **argv) {
         scanner.results().print(std::cout);
 
         return 0;
+    } catch (const std::invalid_argument &ex) {
+        std::cerr << "Error: " << ex.what() << "\n";
+        printUsage(std::cerr);
+        return EX_USAGE;   // bad options or invalid CIDR/data
     } catch (const std::exception &ex) {
         std::cerr << "Error: " << ex.what() << "\n";
-        return 1;
+        printUsage(std::cerr);
+        return EX_OSERR;   // runtime failure (pcap, socket, etc.)
     }
 }
 

@@ -2,8 +2,11 @@
  * @file Scanner.h
  * @brief Header file for the Scanner class
  * @author Petr Vitula (xvitulp00)
+ *
+ * Platform: Linux only. The implementation uses Linux-specific APIs
+ * (AF_PACKET, SO_BINDTODEVICE, ioctl SIOCGIF*, libpcap with DLT_LINUX_SLL/SLL2).
  */
- 
+
 #pragma once
 
 #include <string>

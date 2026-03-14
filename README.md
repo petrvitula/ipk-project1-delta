@@ -6,7 +6,7 @@ Overview
 
 This project implements a simple L2/L3 host discovery scanner for IPv4 and IPv6 as required by the IPK Project 1 assignment. The application sends ARP/NDP requests on the local link and ICMP echo requests (IPv4/IPv6) to discover reachable hosts in configured subnets and prints a summary of scanned ranges together with per‑host results.
 
-The implementation is Linux‑only and targets the official IPK reference virtual machine. It uses raw sockets (ARP, ICMPv4, ICMPv6) and `libpcap` for passive packet capture.
+The implementation is **Linux-only** and targets the official IPK reference virtual machine. It uses raw sockets (ARP, ICMPv4, ICMPv6) and `libpcap` for passive packet capture. Platform-dependent behaviour (e.g. Linux-only APIs) is explicitly marked in the source files (see `Scanner.h`, `Scanner.cpp`, `main.cpp`).
 
 Build and Run
 -------------
@@ -46,6 +46,8 @@ The program also supports:
 
 - `./ipk-L2L3-scan -i` – list non‑loopback interfaces (printed to stdout).
 - `./ipk-L2L3-scan -h` or `./ipk-L2L3-scan --help` – show detailed usage (printed to stdout).
+
+**Exit codes** (see `sysexits.h`): `0` = success; `EX_USAGE` (64) = invalid or missing arguments / invalid CIDR; `EX_OSERR` (71) = runtime failure (e.g. pcap, socket).
 
 Implemented Features and Behavior
 ---------------------------------
@@ -104,6 +106,21 @@ Implemented Features and Behavior
   - Hosts that never receive a matching reply remain in the default `FAIL` state after the timeout expires.
   - `libpcap` uses its own small read timeout (100 ms) so packet delivery is prompt even for large `-w` values.
 
+Source code structure
+---------------------
+
+The project is split into meaningful modules with clear responsibilities:
+
+| Module | Role |
+|--------|------|
+| **main.cpp** | Entry point; CLI argument parsing (`Config`, `parseArguments`, `printUsage`); orchestration of help, list-interfaces, and scan modes. |
+| **Scanner** (`Scanner.h`, `Scanner.cpp`) | Core scan logic: CIDR parsing and host list generation, libpcap setup, send loop (ARP/NDP/ICMP), pcap callback for reply handling, interface listing. |
+| **Results** (`Results.h`, `Results.cpp`) | Storage and formatted output of per-host L2/L3 status (OK/FAIL, MAC). |
+| **Packets** (`Packets.h`, `Packets.cpp`) | Packet construction and checksums: ARP request frame, ICMPv4/ICMPv6 echo request, NDP solicitation, RFC 1071 checksum. |
+| **SignalHandler** (`SignalHandler.h`, `SignalHandler.cpp`) | Signal setup for graceful termination (SIGINT/SIGTERM). |
+
+Source files use section comments and short, focused functions so the code stays readable and maintainable.
+
 Important Design Decisions
 --------------------------
 
@@ -133,37 +150,104 @@ The assignment allows several behaviors to be chosen by the student. The followi
 Testing
 -------
 
-Automated tests are implemented in the `tests` directory and are run via:
+All results below are **textual** (no screenshots), so tests are reproducible from the same environment.
+
+**How to execute automated tests**
 
 ```bash
 make test
 ```
 
-This builds `ipk-L2L3-scan-test` and executes a set of C++ unit tests. No root privileges or real network traffic are required for these tests.
+This builds `ipk-L2L3-scan-test` and runs the test suite. No root or live network is required.
 
-**Tested functionality (examples):**
+**Reproducibility and environment**
 
-- **CIDR parsing and host generation:**
-  - IPv4 `/30`, `/32`, `/31`, `/29`, `/25` – number of usable hosts, correct host ranges.
-  - IPv6 `/126`, `/128` – usable host counts consistent with the assignment examples.
-  - Summary lines printed by `Scanner::printScanningSummary` contain the expected host counts.
+- **Environment:** Linux (e.g. IPK reference VM or any x86_64-linux with devShell `c`). Build with `make` first. Activate devShell via `make NixDevShellName` (prints `c`).
+- **Software (reference):** C++17 (g++), libpcap, make. No special topology for unit tests—they use only in-memory API calls.
+- **Reproducibility:** From the same tree and environment, `make test` yields the same outcome; the full output is given below so evaluators can compare.
 
-- **Results formatting:**
-  - Single IPv4/IPv6 host with various combinations of `OK`/`FAIL` at L2/L3 produces exactly the format required by the assignment (e.g. `arp OK (MAC), icmpv4 FAIL`, `ndp OK, icmpv6 OK`).
-  - Repeated updates for the same IP overwrite previous results instead of duplicating lines.
+**What was tested**
 
-- **Checksums and packet helpers:**
-  - `inetChecksum` is tested on known ICMP echo request values and all‑zero buffers to verify RFC 1071 behavior.
-  - ICMPv4/ICMPv6 echo request structures and ARP/NDP frame builders are validated at the byte level.
+- **Normal behaviour:** CIDR parsing and host list generation (e.g. `/30` → 2 hosts, `/126` → 3 hosts); correct summary lines; result formatting (arp/ndp OK or FAIL, icmpv4/icmpv6 OK or FAIL, MAC in `xx-xx-xx-xx-xx-xx`); checksums (RFC 1071) and packet layout (ARP frame, ICMP echo request).
+- **Edge cases:** `/32` and `/128` (single host); `/31` (RFC 3021, two hosts); invalid CIDR (no slash, bad address, prefix &gt; 32 for IPv4); empty result store; overwriting same IP (no duplicate lines); combined output format (header, blank line, then per-host lines).
 
-- **Input validation and error handling:**
-  - Invalid CIDR strings (missing slash, invalid address, invalid prefix) throw exceptions and lead to non‑zero exit codes.
-  - Output format is verified to contain the `Scanning ranges:` header, an empty line, and then host results.
+**Why it was tested**
 
-**Test environment:**
+To ensure the implementation matches the assignment specification, handles boundary cases correctly, and does not regress when code changes.
 
-- All automated tests run inside the reference `c` devShell without requiring root or access to live network interfaces.
-- For manual integration tests, the scanner was validated on Linux with virtualized networks (QEMU/VirtualBox), using `tcpdump` to inspect ARP/ICMP traffic and confirm packet structure.
+**How it was tested**
+
+Unit tests in `tests/test_main.cpp` and `tests/test_additional.cpp` call `Scanner`, `ResultsStore`, and `Packets` APIs with fixed inputs, then assert on returned values and on strings produced by `printScanningSummary` / `ResultsStore::print`. No network I/O or real interfaces are used. Manual integration checks (optional) were done on Linux with QEMU/VirtualBox and `tcpdump`.
+
+**Testing environment (summary)**
+
+| Aspect | Detail |
+|--------|--------|
+| OS / platform | Linux (x86_64), reference devShell `c` |
+| Build | `make` in project root |
+| Test command | `make test` |
+| Network topology (unit tests) | None; tests are offline |
+
+**Inputs, expected outputs, and actual outputs**
+
+Examples (unit tests):
+
+| What | Input (or action) | Expected output | Actual output |
+|------|-------------------|-----------------|---------------|
+| CIDR /30 | `addSubnet("192.168.1.0/30")`, `generateHostIps()` | 2 hosts: 192.168.1.1, 192.168.1.2 | 2 hosts, correct addresses |
+| CIDR /31 | `addSubnet("10.0.0.0/31")` | 2 hosts: 10.0.0.0, 10.0.0.1 | 2 hosts, 10.0.0.0 and 10.0.0.1 |
+| CIDR /32 | `addSubnet("10.0.0.5/32")` | 1 host: 10.0.0.5 | 1 host, 10.0.0.5 |
+| Invalid CIDR | `addSubnet("999.999.999.999/99")` | exception | `std::invalid_argument` thrown |
+| CIDR no slash | `addSubnet("192.168.1.1")` | exception | `std::invalid_argument` thrown |
+| Result format | `initHost("192.168.1.10", false)`, L2/L3 FAIL, `print(os)` | line with `arp FAIL`, `icmpv4 FAIL` | Output contains exactly that |
+| Checksum | 8 zero bytes → `inetChecksum` | 0xFFFF (RFC 1071) | 0xFFFF |
+
+Full automated run (actual output from `make test`):
+
+```
+Unit tests – IPK L2/L3 Scanner
+----------------------------------------
+  [TEST] CIDR 192.168.1.0/30 → 2 hosts (without network and broadcast) ... OK
+  [TEST] CIDR 10.0.0.5/32 → 1 host ... OK
+  [TEST] CIDR fd00::1/126 → 3 hosts (according to README) ... OK
+  [TEST] Scanning ranges: number of hosts /30=2, /29=6 ... OK
+  [TEST] ResultsStore: same IP twice → overwrites, one line in output ... OK
+  [TEST] ResultsStore: IPv4 host with L2/L3 FAIL printed with arp/icmpv4 FAIL ... OK
+  [TEST] ResultsStore: IPv6 host uses ndp/icmpv6 literals ... OK
+  [TEST] inetChecksum: 8 zero bytes → 0xFFFF (RFC 1071) ... OK
+  [TEST] inetChecksum: známý ICMP Echo Request (type=8, code=0, csum=0, id=1, seq=0) ... OK
+  [TEST] Invalid CIDR 999.999.999.999/99 → exception ... OK
+  [TEST] CIDR without slash → exception ... OK
+  [TEST] CIDR with prefix > 32 for IPv4 → exception ... OK
+  [TEST] Combined output format: ranges summary, empty line, then per-host results ... OK
+
+--- Additional tests (CIDR, ResultsStore, Packets) ---
+  [TEST] CIDR normalization: 192.168.0.5/25 → network address 192.168.0.0/25 ... OK
+  [TEST] CIDR 10.0.0.0/31 → 2 hosts: 10.0.0.0 a 10.0.0.1 ... OK
+  [TEST] CIDR 10.0.0.0/29 → hosts .1 to .6, without .0 and .7 ... OK
+  [TEST] CIDR 192.168.0.0/25 → 126 hosts (README example) ... OK
+  [TEST] CIDR fd00::cafe/128 → 1 host = fd00::cafe ... OK
+  [TEST] printScanningSummary obsahuje IPv6 subnet s počtem hostů ... OK
+  [TEST] ResultsStore: arp OK + icmpv4 FAIL → correct output ... OK
+  [TEST] ResultsStore: arp FAIL + icmpv4 OK → correct output ... OK
+  [TEST] ResultsStore: MAC format is lowercase hex with hyphens (00-1a-2b-3c-4d-5e) ... OK
+  [TEST] ResultsStore: multiple hosts → each on its own line ... OK
+  [TEST] buildArpRequestFrame: length 42B, dst=broadcast, ethertype=0x0806 ... OK
+  [TEST] buildIcmpv4EchoRequest: type=8, code=0, checksum≠0 ... OK
+  [TEST] inetChecksum: known-good ICMP Echo Request → checksum verified ... OK
+  [TEST] ResultsStore: empty store → empty output ... OK
+  [TEST] printScanningSummary: starts exactly with 'Scanning ranges:\n' ... OK
+----------------------------------------
+Total: 28 tests, 0 failed.
+```
+
+**Our test set**
+
+The test suite in `tests/` is our own: written for this project to cover the assignment specification and edge cases. It is not taken from a third-party package.
+
+**Comparison with comparable tools**
+
+Tools such as **nmap** (e.g. `-sn` for host discovery), **arp-scan**, or **ping** also perform L2/L3 discovery. This project is a minimal implementation for the assignment: it does not aim to replace nmap. Differences: our output is a fixed text format (one line per host with arp/ndp and icmpv4/icmpv6 status); we support both IPv4 and IPv6 in one run; we use raw sockets and libpcap directly rather than a high-level library. For validation we compared packet structure with `tcpdump` and behaviour with manual `ping`/ARP where relevant.
 
 Known Limitations
 -----------------
@@ -179,11 +263,12 @@ Known Limitations
 
 Apart from the limitations explicitly listed above, **no other known limitations** are present at the time of submission.
 
-References
-----------
+References / sources used
+-------------------------
 
 - IPK Project Guidelines and assignment text (NES@FIT, VUT Brno).
-- `man 7 raw`, `man 7 packet`, `man 7 ip`, `man 7 icmp`, `man 7 icmp6`.
-- `libpcap` documentation and examples.
+- Linux manual pages: `man 7 raw`, `man 7 packet`, `man 7 ip`, `man 7 icmp`, `man 7 icmp6`, `man 3 sysexits`.
+- libpcap documentation and examples (packet capture API).
 - RFC 1071 – Computing the Internet Checksum.
 - RFC 3021 – Using 31‑Bit Prefixes on IPv4 Point‑to‑Point Links.
+- RFC 4861 – Neighbor Discovery for IP version 6 (NDP, ICMPv6).
