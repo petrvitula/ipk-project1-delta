@@ -6,7 +6,7 @@ Overview
 
 This project implements a simple L2/L3 host discovery scanner for IPv4 and IPv6 as required by the IPK Project 1 assignment. The application sends ARP/NDP requests on the local link and ICMP echo requests (IPv4/IPv6) to discover reachable hosts in configured subnets and prints a summary of scanned ranges together with per‑host results.
 
-The implementation is **Linux-only** and targets the official IPK reference virtual machine. It uses raw sockets (ARP, ICMPv4, ICMPv6) and `libpcap` for passive packet capture. Platform-dependent behaviour (e.g. Linux-only APIs) is explicitly marked in the source files (see `Scanner.h`, `Scanner.cpp`, `main.cpp`).
+The implementation is **Linux-only**. It uses raw sockets (ARP, ICMPv4, ICMPv6) and `libpcap` for passive packet capture. Platform-dependent behaviour (e.g. Linux-only APIs) is explicitly marked in the source files (see `Scanner.h`, `Scanner.cpp`, `main.cpp`).
 
 Build and Run
 -------------
