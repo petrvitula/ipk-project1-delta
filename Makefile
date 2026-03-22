@@ -46,8 +46,11 @@ $(OBJ_DIR)/test_additional.o: $(TEST_DIR)/test_additional.cpp
 $(TEST_TARGET): $(OBJ_DIR) $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o $(OBJ_DIR)/test_additional.o
 	$(CC) $(CFLAGS) -o $@ $(TEST_OBJECTS) $(OBJ_DIR)/test_main.o $(OBJ_DIR)/test_additional.o $(LDFLAGS)
 
-test: $(TEST_TARGET)
+test: $(TEST_TARGET) $(TARGET)
 	@./$(TEST_TARGET)
+	@echo ""
+	@chmod +x $(TEST_DIR)/run_functional_tests.sh
+	@$(TEST_DIR)/run_functional_tests.sh
 
 .PHONY: clean test NixDevShellName
 

@@ -18,14 +18,22 @@
 int tests_run = 0;
 int tests_failed = 0;
 
+// Current test label for unified [OK] / [FAIL] lines (shared with test_additional.cpp).
+const char *g_test_current_name = nullptr;
+
 #define TEST(name) do { \
     ++tests_run; \
-    std::cout << "  [TEST] " << (name) << " ... "; \
-    std::cout.flush(); \
+    g_test_current_name = (name); \
 } while(0)
 
-#define TEST_OK() do { std::cout << "OK\n"; } while(0)
-#define TEST_FAIL(msg) do { ++tests_failed; std::cout << "FAIL: " << (msg) << "\n"; } while(0)
+#define TEST_OK() do { \
+    std::cout << "[OK]   " << g_test_current_name << "\n"; \
+} while(0)
+
+#define TEST_FAIL(msg) do { \
+    ++tests_failed; \
+    std::cout << "[FAIL] " << g_test_current_name << ": " << (msg) << "\n"; \
+} while(0)
 
 // Additional tests implemented in separate translation unit.
 // Declared here so we can call them from main().
@@ -35,7 +43,7 @@ void run_additional_tests();
 
 // Basic IPv4 /30 range – verify that network and broadcast are excluded
 static void test_cidr_ipv4_30() {
-    TEST("CIDR 192.168.1.0/30 → 2 hosts (without network and broadcast)");
+    TEST("CIDR 192.168.1.0/30 -> 2 hosts (without network and broadcast)");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.1.0/30");
@@ -58,7 +66,7 @@ static void test_cidr_ipv4_30() {
 
 // Single-host IPv4 /32 range – exactly one concrete host
 static void test_cidr_ipv4_32() {
-    TEST("CIDR 10.0.0.5/32 → 1 host");
+    TEST("CIDR 10.0.0.5/32 -> 1 host");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("10.0.0.5/32");
@@ -79,7 +87,7 @@ static void test_cidr_ipv4_32() {
 
 // IPv6 /126 range – number of usable hosts taken from README example
 static void test_cidr_ipv6_126() {
-    TEST("CIDR fd00::1/126 → 3 hosts (according to README)");
+    TEST("CIDR fd00::1/126 -> 3 hosts (per assignment README)");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("fd00::1/126");
@@ -122,7 +130,7 @@ static void test_cidr_summary_counts() {
 
 // When the same IPv4 host is updated multiple times, only one line should be printed
 static void test_results_store_update_no_duplicate() {
-    TEST("ResultsStore: same IP twice → overwrites, one line in output");
+    TEST("ResultsStore: same IP twice overwrites, one line in output");
     try {
         ResultsStore r;
         r.initHost("192.168.1.1", false);
@@ -159,7 +167,7 @@ static void test_results_store_update_no_duplicate() {
 
 // IPv4 host with explicit FAIL statuses on both layers uses arp/icmpv4 literals
 static void test_results_store_fail_ipv4() {
-    TEST("ResultsStore: IPv4 host with L2/L3 FAIL printed with arp/icmpv4 FAIL");
+    TEST("ResultsStore: IPv4 host L2/L3 FAIL printed as arp/icmpv4 FAIL");
     try {
         ResultsStore r;
         r.initHost("192.168.1.10", false);
@@ -224,7 +232,7 @@ static void test_results_store_ipv6_ok() {
 // --- 3. Checksum -------------------------------------------------------------
 
 static void test_checksum_zeros() {
-    TEST("inetChecksum: 8 zero bytes → 0xFFFF (RFC 1071)");
+    TEST("inetChecksum: 8 zero bytes yields 0xFFFF (RFC 1071)");
     std::uint8_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     std::uint16_t csum = inetChecksum(zeros, 8);
     if (csum != 0xFFFF) {
@@ -237,9 +245,9 @@ static void test_checksum_zeros() {
 }
 
 static void test_checksum_icmp_echo_request() {
-    TEST("inetChecksum: známý ICMP Echo Request (type=8, code=0, csum=0, id=1, seq=0)");
-    // After calculating the checksum, the packet should be valid; we check that the function returns a consistent value
-    std::uint8_t icmp[8] = { 8, 0, 0, 0, 0, 1, 0, 0 }; // id=1, seq=0 v network order
+    TEST("inetChecksum: known ICMP Echo Request (type=8, code=0, csum=0, id=1, seq=0)");
+    // After checksum calculation the packet should be valid; we only require a non-zero checksum here.
+    std::uint8_t icmp[8] = { 8, 0, 0, 0, 0, 1, 0, 0 }; // id=1, seq=0 in network byte order
     std::uint16_t csum = inetChecksum(icmp, 8);
     (void)csum;
     // Check: checksum must not be 0 (because then it would be invalid)
@@ -254,7 +262,7 @@ static void test_checksum_icmp_echo_request() {
 
 // Completely invalid IPv4 address and prefix should be rejected
 static void test_invalid_cidr_throws() {
-    TEST("Invalid CIDR 999.999.999.999/99 → exception");
+    TEST("Invalid CIDR 999.999.999.999/99 throws exception");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("999.999.999.999/99");
@@ -266,7 +274,7 @@ static void test_invalid_cidr_throws() {
 
 // CIDR string without slash should be rejected
 static void test_invalid_cidr_no_slash() {
-    TEST("CIDR without slash → exception");
+    TEST("CIDR without slash throws exception");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.1.1");
@@ -278,7 +286,7 @@ static void test_invalid_cidr_no_slash() {
 
 // Prefix length outside valid IPv4 range (0–32) should cause an exception
 static void test_invalid_cidr_prefix_too_large() {
-    TEST("CIDR with prefix > 32 for IPv4 → exception");
+    TEST("CIDR with IPv4 prefix > 32 throws exception");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.0.0/33");
@@ -338,8 +346,9 @@ static void test_combined_output_format() {
 // -----------------------------------------------------------------------------
 
 int main() {
-    std::cout << "Unit tests – IPK L2/L3 Scanner\n";
-    std::cout << "----------------------------------------\n";
+    std::cout << "============================================================================\n";
+    std::cout << "  Unit tests (C++)\n";
+    std::cout << "============================================================================\n";
 
     test_cidr_ipv4_30();
     test_cidr_ipv4_32();
@@ -358,7 +367,7 @@ int main() {
     // Run any additional tests defined in tests/test_additional.cpp
     run_additional_tests();
 
-    std::cout << "----------------------------------------\n";
-    std::cout << "Total: " << tests_run << " tests, " << tests_failed << " failed.\n";
+    std::cout << "----------------------------------------------------------------------------\n";
+    std::cout << "[SUMMARY] Unit tests: " << tests_run << " run, " << tests_failed << " failed\n";
     return tests_failed ? 1 : 0;
 }

@@ -17,18 +17,23 @@
 #include <vector>
 #include <arpa/inet.h>
 
-// TEST/TEST_OK/TEST_FAIL are defined in test_main.cpp
 extern int tests_run;
 extern int tests_failed;
+extern const char *g_test_current_name;
 
 #define TEST(name) do { \
     ++tests_run; \
-    std::cout << "  [TEST] " << (name) << " ... "; \
-    std::cout.flush(); \
+    g_test_current_name = (name); \
 } while(0)
 
-#define TEST_OK() do { std::cout << "OK\n"; } while(0)
-#define TEST_FAIL(msg) do { ++tests_failed; std::cout << "FAIL: " << (msg) << "\n"; } while(0)
+#define TEST_OK() do { \
+    std::cout << "[OK]   " << g_test_current_name << "\n"; \
+} while(0)
+
+#define TEST_FAIL(msg) do { \
+    ++tests_failed; \
+    std::cout << "[FAIL] " << g_test_current_name << ": " << (msg) << "\n"; \
+} while(0)
 
 // =============================================================================
 // 1. CIDR normalization
@@ -36,7 +41,7 @@ extern int tests_failed;
 
 // README explicitly mentions: "192.168.0.5/25" -> network "192.168.0.0/25"
 static void test_cidr_normalization_ipv4() {
-    TEST("CIDR normalization: 192.168.0.5/25 → network address 192.168.0.0/25");
+    TEST("CIDR normalization: 192.168.0.5/25 -> network 192.168.0.0/25");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.0.5/25");
@@ -59,7 +64,7 @@ static void test_cidr_normalization_ipv4() {
 
 // /31 is RFC 3021 – both hosts are usable (base+0 and base+1)
 static void test_cidr_ipv4_31() {
-    TEST("CIDR 10.0.0.0/31 → 2 hosts: 10.0.0.0 a 10.0.0.1");
+    TEST("CIDR 10.0.0.0/31 -> 2 hosts: 10.0.0.0 and 10.0.0.1");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("10.0.0.0/31");
@@ -80,9 +85,9 @@ static void test_cidr_ipv4_31() {
     }
 }
 
-// /29 → hosts .1 to .6, .0 (network) and .7 (broadcast) must not be included
+// /29: hosts .1 to .6; .0 (network) and .7 (broadcast) must not be included
 static void test_cidr_ipv4_29_host_range() {
-    TEST("CIDR 10.0.0.0/29 → hosts .1 to .6, without .0 and .7");
+    TEST("CIDR 10.0.0.0/29 -> hosts .1 to .6, excluding .0 and .7");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("10.0.0.0/29");
@@ -101,9 +106,9 @@ static void test_cidr_ipv4_29_host_range() {
     }
 }
 
-// /25 → 126 hosts (README example)
+// /25: 126 hosts (README example)
 static void test_cidr_ipv4_25_count() {
-    TEST("CIDR 192.168.0.0/25 → 126 hosts (README example)");
+    TEST("CIDR 192.168.0.0/25 -> 126 hosts (README example)");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("192.168.0.0/25");
@@ -118,9 +123,9 @@ static void test_cidr_ipv4_25_count() {
     }
 }
 
-// /128 → exactly 1 host = the same address
+// /128: exactly one host (the address itself)
 static void test_cidr_ipv6_128() {
-    TEST("CIDR fd00::cafe/128 → 1 host = fd00::cafe");
+    TEST("CIDR fd00::cafe/128 -> single host fd00::cafe");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("fd00::cafe/128");
@@ -139,9 +144,9 @@ static void test_cidr_ipv6_128() {
     }
 }
 
-// IPv6 summary line v printScanningSummary
+// IPv6 summary line in printScanningSummary
 static void test_cidr_ipv6_summary() {
-    TEST("printScanningSummary obsahuje IPv6 subnet s počtem hostů");
+    TEST("printScanningSummary includes IPv6 subnet and host count");
     try {
         Scanner sc("lo", 1000);
         sc.addSubnet("fd00::/126");
@@ -165,7 +170,7 @@ static void test_cidr_ipv6_summary() {
 
 // arp OK but icmpv4 FAIL (common case – host exists but blocks ping)
 static void test_results_arp_ok_icmp_fail() {
-    TEST("ResultsStore: arp OK + icmpv4 FAIL → correct output");
+    TEST("ResultsStore: arp OK and icmpv4 FAIL -> correct output");
     try {
         ResultsStore r;
         r.initHost("10.0.0.1", false);
@@ -192,12 +197,12 @@ static void test_results_arp_ok_icmp_fail() {
 
 // arp FAIL but icmpv4 OK (less common but valid case)
 static void test_results_arp_fail_icmp_ok() {
-    TEST("ResultsStore: arp FAIL + icmpv4 OK → correct output");
+    TEST("ResultsStore: arp FAIL and icmpv4 OK -> correct output");
     try {
         ResultsStore r;
         r.initHost("10.0.0.2", false);
         r.updateL3Ok("10.0.0.2");
-        // L2 zůstane FAIL
+        // L2 stays FAIL (default)
 
         std::ostringstream os;
         r.print(os);
@@ -246,7 +251,7 @@ static void test_results_mac_format() {
 
 // Multiple hosts – each on its own line
 static void test_results_multiple_hosts() {
-    TEST("ResultsStore: multiple hosts → each on its own line");
+    TEST("ResultsStore: multiple hosts, each on its own line");
     try {
         ResultsStore r;
         r.initHost("10.0.0.1", false);
@@ -315,7 +320,7 @@ static void test_arp_frame_structure() {
 
 // ICMPv4 echo request must have type=8, code=0, non-zero checksum
 static void test_icmpv4_echo_request_structure() {
-    TEST("buildIcmpv4EchoRequest: type=8, code=0, checksum≠0");
+    TEST("buildIcmpv4EchoRequest: type=8, code=0, checksum non-zero");
     try {
         auto buf = buildIcmpv4EchoRequest(0x1234, 1);
 
@@ -357,7 +362,7 @@ static void test_icmpv4_echo_request_structure() {
 
 // inetChecksum: verification using known-good ICMP Echo Request value
 static void test_checksum_known_value() {
-    TEST("inetChecksum: known-good ICMP Echo Request → checksum verified");
+    TEST("inetChecksum: known-good ICMP Echo Request checksum verified");
     // ICMP Echo Request: type=8, code=0, csum=0, id=0x0001, seq=0x0001, data="Hello"
     // Correct checksum calculated manually
     std::uint8_t pkt[] = {
@@ -385,9 +390,9 @@ static void test_checksum_known_value() {
 // 4. Output format edge cases
 // =============================================================================
 
-// Empty ResultsStore → empty output (no hosts)
+// Empty ResultsStore: empty output (no hosts)
 static void test_results_empty_store() {
-    TEST("ResultsStore: empty store → empty output");
+    TEST("ResultsStore: empty store yields empty output");
     try {
         ResultsStore r;
         std::ostringstream os;
@@ -426,7 +431,9 @@ static void test_summary_header_format() {
 // =============================================================================
 
 void run_additional_tests() {
-    std::cout << "\n--- Additional tests (CIDR, ResultsStore, Packets) ---\n";
+    std::cout << "----------------------------------------------------------------------------\n";
+    std::cout << "  Additional unit tests (CIDR, ResultsStore, Packets)\n";
+    std::cout << "----------------------------------------------------------------------------\n";
 
     // CIDR
     test_cidr_normalization_ipv4();

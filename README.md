@@ -158,7 +158,7 @@ All results below are **textual** (no screenshots), so tests are reproducible fr
 make test
 ```
 
-This builds `ipk-L2L3-scan-test` and runs the test suite. No root or live network is required.
+This builds `ipk-L2L3-scan` and `ipk-L2L3-scan-test`, runs the C++ unit tests, then runs `tests/run_functional_tests.sh` (black-box CLI checks). Unit tests need no root; functional tests 3–4 use `sudo` when not root (raw sockets / pcap on `lo`).
 
 **Reproducibility and environment**
 
@@ -168,7 +168,7 @@ This builds `ipk-L2L3-scan-test` and runs the test suite. No root or live networ
 
 **What was tested**
 
-- **Normal behaviour:** CIDR parsing and host list generation (e.g. `/30` → 2 hosts, `/126` → 3 hosts); correct summary lines; result formatting (arp/ndp OK or FAIL, icmpv4/icmpv6 OK or FAIL, MAC in `xx-xx-xx-xx-xx-xx`); checksums (RFC 1071) and packet layout (ARP frame, ICMP echo request).
+- **Normal behaviour:** CIDR parsing and host list generation (e.g. `/30` gives 2 hosts, `/126` gives 3 hosts); correct summary lines; result formatting (arp/ndp OK or FAIL, icmpv4/icmpv6 OK or FAIL, MAC in `xx-xx-xx-xx-xx-xx`); checksums (RFC 1071) and packet layout (ARP frame, ICMP echo request).
 - **Edge cases:** `/32` and `/128` (single host); `/31` (RFC 3021, two hosts); invalid CIDR (no slash, bad address, prefix &gt; 32 for IPv4); empty result store; overwriting same IP (no duplicate lines); combined output format (header, blank line, then per-host lines).
 
 **Why it was tested**
@@ -200,45 +200,64 @@ Examples (unit tests):
 | Invalid CIDR | `addSubnet("999.999.999.999/99")` | exception | `std::invalid_argument` thrown |
 | CIDR no slash | `addSubnet("192.168.1.1")` | exception | `std::invalid_argument` thrown |
 | Result format | `initHost("192.168.1.10", false)`, L2/L3 FAIL, `print(os)` | line with `arp FAIL`, `icmpv4 FAIL` | Output contains exactly that |
-| Checksum | 8 zero bytes → `inetChecksum` | 0xFFFF (RFC 1071) | 0xFFFF |
+| Checksum | 8 zero bytes via `inetChecksum` | 0xFFFF (RFC 1071) | 0xFFFF |
 
 Full automated run (actual output from `make test`):
 
 ```
-Unit tests – IPK L2/L3 Scanner
-----------------------------------------
-  [TEST] CIDR 192.168.1.0/30 → 2 hosts (without network and broadcast) ... OK
-  [TEST] CIDR 10.0.0.5/32 → 1 host ... OK
-  [TEST] CIDR fd00::1/126 → 3 hosts (according to README) ... OK
-  [TEST] Scanning ranges: number of hosts /30=2, /29=6 ... OK
-  [TEST] ResultsStore: same IP twice → overwrites, one line in output ... OK
-  [TEST] ResultsStore: IPv4 host with L2/L3 FAIL printed with arp/icmpv4 FAIL ... OK
-  [TEST] ResultsStore: IPv6 host uses ndp/icmpv6 literals ... OK
-  [TEST] inetChecksum: 8 zero bytes → 0xFFFF (RFC 1071) ... OK
-  [TEST] inetChecksum: známý ICMP Echo Request (type=8, code=0, csum=0, id=1, seq=0) ... OK
-  [TEST] Invalid CIDR 999.999.999.999/99 → exception ... OK
-  [TEST] CIDR without slash → exception ... OK
-  [TEST] CIDR with prefix > 32 for IPv4 → exception ... OK
-  [TEST] Combined output format: ranges summary, empty line, then per-host results ... OK
+============================================================================
+  Unit tests (C++)
+============================================================================
+[OK]   CIDR 192.168.1.0/30 -> 2 hosts (without network and broadcast)
+[OK]   CIDR 10.0.0.5/32 -> 1 host
+[OK]   CIDR fd00::1/126 -> 3 hosts (per assignment README)
+[OK]   Scanning ranges: number of hosts /30=2, /29=6
+[OK]   ResultsStore: same IP twice overwrites, one line in output
+[OK]   ResultsStore: IPv4 host L2/L3 FAIL printed as arp/icmpv4 FAIL
+[OK]   ResultsStore: IPv6 host uses ndp/icmpv6 literals
+[OK]   inetChecksum: 8 zero bytes yields 0xFFFF (RFC 1071)
+[OK]   inetChecksum: known ICMP Echo Request (type=8, code=0, csum=0, id=1, seq=0)
+[OK]   Invalid CIDR 999.999.999.999/99 throws exception
+[OK]   CIDR without slash throws exception
+[OK]   CIDR with IPv4 prefix > 32 throws exception
+[OK]   Combined output format: ranges summary, empty line, then per-host results
+----------------------------------------------------------------------------
+  Additional unit tests (CIDR, ResultsStore, Packets)
+----------------------------------------------------------------------------
+[OK]   CIDR normalization: 192.168.0.5/25 -> network 192.168.0.0/25
+[OK]   CIDR 10.0.0.0/31 -> 2 hosts: 10.0.0.0 and 10.0.0.1
+[OK]   CIDR 10.0.0.0/29 -> hosts .1 to .6, excluding .0 and .7
+[OK]   CIDR 192.168.0.0/25 -> 126 hosts (README example)
+[OK]   CIDR fd00::cafe/128 -> single host fd00::cafe
+[OK]   printScanningSummary includes IPv6 subnet and host count
+[OK]   ResultsStore: arp OK and icmpv4 FAIL -> correct output
+[OK]   ResultsStore: arp FAIL and icmpv4 OK -> correct output
+[OK]   ResultsStore: MAC format is lowercase hex with hyphens (00-1a-2b-3c-4d-5e)
+[OK]   ResultsStore: multiple hosts, each on its own line
+[OK]   buildArpRequestFrame: length 42B, dst=broadcast, ethertype=0x0806
+[OK]   buildIcmpv4EchoRequest: type=8, code=0, checksum non-zero
+[OK]   inetChecksum: known-good ICMP Echo Request checksum verified
+[OK]   ResultsStore: empty store yields empty output
+[OK]   printScanningSummary: starts exactly with 'Scanning ranges:\n'
+----------------------------------------------------------------------------
+[SUMMARY] Unit tests: 28 run, 0 failed
 
---- Additional tests (CIDR, ResultsStore, Packets) ---
-  [TEST] CIDR normalization: 192.168.0.5/25 → network address 192.168.0.0/25 ... OK
-  [TEST] CIDR 10.0.0.0/31 → 2 hosts: 10.0.0.0 a 10.0.0.1 ... OK
-  [TEST] CIDR 10.0.0.0/29 → hosts .1 to .6, without .0 and .7 ... OK
-  [TEST] CIDR 192.168.0.0/25 → 126 hosts (README example) ... OK
-  [TEST] CIDR fd00::cafe/128 → 1 host = fd00::cafe ... OK
-  [TEST] printScanningSummary obsahuje IPv6 subnet s počtem hostů ... OK
-  [TEST] ResultsStore: arp OK + icmpv4 FAIL → correct output ... OK
-  [TEST] ResultsStore: arp FAIL + icmpv4 OK → correct output ... OK
-  [TEST] ResultsStore: MAC format is lowercase hex with hyphens (00-1a-2b-3c-4d-5e) ... OK
-  [TEST] ResultsStore: multiple hosts → each on its own line ... OK
-  [TEST] buildArpRequestFrame: length 42B, dst=broadcast, ethertype=0x0806 ... OK
-  [TEST] buildIcmpv4EchoRequest: type=8, code=0, checksum≠0 ... OK
-  [TEST] inetChecksum: known-good ICMP Echo Request → checksum verified ... OK
-  [TEST] ResultsStore: empty store → empty output ... OK
-  [TEST] printScanningSummary: starts exactly with 'Scanning ranges:\n' ... OK
-----------------------------------------
-Total: 28 tests, 0 failed.
+============================================================================
+  Functional tests (black-box CLI) - ./ipk-L2L3-scan
+============================================================================
+[OK]   Test 1: ./ipk-L2L3-scan -h returns exit code 0
+[OK]   Test 2: ./ipk-L2L3-scan -i lists interfaces and returns 0
+[OK]   Test 3: output contains Scanning ranges: and 127.0.0.0/30 2
+[OK]   Test 4: -i nonexist0 exits non-zero (exit code 71)
+[OK]   Test 5: empty line between summary and results found
+[OK]   Test 6: IPv6 normalization and host count (3 hosts for /126)
+[OK]   Test 7: missing -s correctly returns non-zero
+[OK]   Test 8: Mixed IPv4/IPv6 subnets and random argument order
+[OK]   Test 9: --help returns exit code 0
+[OK]   Test 10: Duplicate subnets handled without crash
+[OK]   Test 11: Invalid prefix /33 correctly rejected
+----------------------------------------------------------------------------
+[SUMMARY] Functional tests: all checks passed
 ```
 
 **Our test set**
